@@ -22,18 +22,114 @@
 | Embedding    | 阿里 text-v3      | BGE-M3 (本地)      | OpenAI embedding       |
 | 语言         | Python 3.11+      | —                  | TypeScript/JavaScript  |
 
-## 📋 LangGraph State 权威定义（不可擅自修改）
-```python
-from typing import TypedDict, List, Optional, Annotated
-from langgraph.graph import add_messages
-
-class MedicalQAState(TypedDict):
-    messages: Annotated[List[dict], add_messages]  # 对话历史
-    collected_info: dict                            # 结构化病历JSON
-    search_results: List[dict]                      # [{content, source, score, timestamp}]
-    current_agent: str                              # master/interview/search/diagnosis/emergency
-    red_flag_triggered: bool                        # 是否触发紧急中断
-    diagnosis_output: Optional[dict]                # 诊断报告JSON
-    session_id: str                                 # 会话ID
-    round_count: int                                # 当前问诊轮次
-    intent: str                                     # diagnosis/question/emergency/greeting/status
+## 📁 项目目录结构（权威定义，不可擅自变更）
+```text
+医疗智能问答系统/                    # 项目根目录
+├── backend/                           # 后端服务（FastAPI + LangGraph）
+│   ├── api/                           # API 层（仅负责 HTTP/SSE 接入）
+│   │   ├── __init__.py
+│   │   ├── main.py                    # FastAPI 应用入口 + CORS + 生命周期
+│   │   ├── routers/                   # 路由定义
+│   │   │   ├── __init__.py
+│   │   │   ├── sessions.py            # 会话创建/列表/删除
+│   │   │   ├── messages.py            # 核心：SSE 流式消息入口
+│   │   │   └── safety_events.py       # 安全事件上报（前端触发）
+│   │   └── schemas/                   # Pydantic 请求/响应模型
+│   │       ├── __init__.py
+│   │       ├── session.py
+│   │       ├── message.py             # 含 SSE 事件 payload 定义
+│   │       └── safety.py
+│   ├── workflow/                      # 🌟 核心工作流层（Agent 逻辑归于此）
+│   │   ├── __init__.py
+│   │   ├── state.py                   # MedicalQAState TypedDict + Reducer
+│   │   ├── graph.py                   # StateGraph 构建 + compile + 入口函数
+│   │   ├── routes.py                  # 条件边路由决策（如：是否触发紧急响应）
+│   │   └── nodes/                     # 每个文件 = StateGraph 一个节点
+│   │       ├── __init__.py
+│   │       ├── interview_node.py      # 问诊信息采集
+│   │       ├── search_node.py         # 知识库检索
+│   │       ├── safety_check_node.py   # PII脱敏 + 红旗词检测 + 内容审核
+│   │       ├── response_node.py       # 生成最终回复（含 hidden_cot 过滤）
+│   │       └── human_review_node.py   # 人工中断点（断点续传）
+│   ├── knowledge/                     # 知识检索层
+│   │   ├── __init__.py
+│   │   ├── retriever.py               # 混合检索（向量+关键词）
+│   │   ├── vector_store.py            # Milvus/pgvector 适配器
+│   │   └── kb_loader.py               # 知识库导入/更新工具
+│   ├── safety/                        # 安全护栏层（被 nodes/safety_check_node 调用）
+│   │   ├── __init__.py
+│   │   ├── pii_detector.py            # 患者隐私识别与脱敏
+│   │   ├── red_flag_detector.py       # 危急重症关键词检测
+│   │   └── content_filter.py          # 输出合规性校验
+│   ├── persistence/                   # 数据持久层（精简版，聚焦合规）
+│   │   ├── __init__.py
+│   │   ├── database.py                # DB 连接 + LangGraph Checkpointer 配置
+│   │   └── models/                    # SQLAlchemy ORM（仅合规必需表）
+│   │       ├── __init__.py
+│   │       ├── audit_log.py           # 操作审计日志（强制留存）
+│   │       └── medical_record.py      # 最终问诊报告归档
+│   ├── llm/                           # LLM 适配层
+│   │   ├── __init__.py
+│   │   ├── adapter.py                 # 统一多模型接口
+│   │   └── streaming.py               # 流式输出标准化处理
+│   ├── config/                        # 配置管理
+│   │   ├── __init__.py
+│   │   ├── settings.py                # Pydantic Settings（环境变量绑定）
+│   │   ├── llm.yaml                   # 模型参数 + 密钥引用
+│   │   └── safety_rules.yaml          # 安全规则阈值配置
+│   ├── scripts/                       # 运维脚本
+│   │   ├── init_db.py                 # 初始化审计表 + 知识库
+│   │   └── load_knowledge.py          # 批量导入医学文献
+│   ├── tests/                         # 测试（按节点粒度组织）
+│   │   ├── __init__.py
+│   │   ├── unit_nodes/                # 单节点测试（TDD 核心）
+│   │   │   ├── test_safety_check.py
+│   │   │   └── test_interview.py
+│   │   ├── integration/               # 工作流集成测试
+│   │   └── e2e/                       # 端到端 SSE 流测试
+│   ├── .env.example                   # 环境变量模板
+│   ├── requirements.txt               # Python 依赖
+│   └── Dockerfile                     # 后端容器化
+├── frontend/                          # 前端应用（Vue3/React + Vite）
+│   ├── public/
+│   │   └── index.html
+│   ├── src/
+│   │   ├── components/                # UI 组件
+│   │   │   ├── ChatMessage.vue        # 消息气泡（支持流式渲染）
+│   │   │   ├── EmergencyAlert.vue     # 紧急告警弹窗
+│   │   │   ├── HumanReviewPanel.vue   # 人工审核面板
+│   │   │   └── SessionSidebar.vue     # 会话列表侧边栏
+│   │   ├── views/                     # 页面视图
+│   │   │   ├── ChatPage.vue           # 主问诊页（SSE 消费核心）
+│   │   │   ├── HistoryPage.vue        # 历史记录
+│   │   │   └── ReportPage.vue         # 报告详情页
+│   │   ├── stores/                    # Pinia/Zustand 状态管理
+│   │   │   ├── sessionStore.ts
+│   │   │   ├── messageStore.ts        # 管理流式消息拼接
+│   │   │   └── safetyStore.ts         # 本地安全状态（如输入预警）
+│   │   ├── api/                       # API 封装
+│   │   │   ├── sessionApi.ts
+│   │   │   ├── messageApi.ts          # 含 SSE 订阅逻辑
+│   │   │   └── safetyApi.ts
+│   │   ├── utils/
+│   │   │   ├── sseHandler.ts          # SSE 事件解析 + 重连
+│   │   │   ├── piiMasker.ts           # 前端输入预脱敏
+│   │   │   └── markdownRenderer.ts    # 医疗内容安全渲染
+│   │   ├── types/                     # TS 类型（与后端 schemas 对齐）
+│   │   │   ├── session.ts
+│   │   │   ├── message.ts
+│   │   │   └── sseEvent.ts            # SSE 事件类型定义
+│   │   ├── App.vue
+│   │   ├── main.ts
+│   │   └── styles/
+│   │       └── global.css
+│   ├── .env.example
+│   ├── package.json
+│   ├── vite.config.ts
+│   ├── tsconfig.json
+│   └── Dockerfile
+├── docs/                              # 🌟 运行时契约文档（替代传统 SDD）
+├── docker-compose.yml                 # 一键启动：backend + frontend + db + vectorstore
+├── nginx.conf                         # 生产环境反向代理 + SSE 缓冲关闭
+├── CLAUDE.md                          # 👈 本文件即为 AI 协作的唯一权威指令集
+└── README.md

@@ -10,6 +10,7 @@
 
 | 编号 | 决策 | 状态 | 日期 |
 |------|------|------|------|
+| ADR-013 | v2.0 架构演进：Twin-Track 问诊 + 两阶段流水线 | ✅ 已确认 | 2026-06-20 |
 | ADR-001 | LangGraph 作为 Agent 编排框架 | ✅ 已确认 | 2026-06-19 |
 | ADR-002 | Master-Agent 集中路由模式 | ✅ 已确认 | 2026-06-19 |
 | ADR-003 | 黑板模式 Agent 间通信 | ✅ 已确认 | 2026-06-19 |
@@ -22,6 +23,32 @@
 | ADR-010 | pgvector 双轨并行策略 | ✅ 已确认 | 2026-06-19 |
 | ADR-011 | LLM 适配层无代码切换 | ✅ 已确认 | 2026-06-19 |
 | ADR-012 | 问诊核心字段终止条件 | 🔶 待确认 | 2026-06-19 |
+
+---
+
+## ADR-013: v2.0 架构演进 — Twin-Track 问诊 + 两阶段流水线
+
+### 状态
+✅ 已确认
+
+### 背景
+原 v1.0 架构采用独立的三 Agent 并行模型（问诊Agent / 搜索Agent / 诊断Agent），LangGraph 图中包含独立的 search、diagnosis 等节点。实践中发现：搜索作为独立节点阻塞了 interview→response 路径，且诊断逻辑与回复生成高度耦合，强行拆分为独立节点增加了状态管理复杂度。
+
+### 决策
+采用 **Twin-Track 问诊 + 两阶段流水线** 模型：
+1. **搜索内嵌为 Track B**：不再作为独立 LangGraph 节点，而是问诊Agent 内部的异步并行 Track，每轮问诊时以 `asyncio.create_task()` 触发，不阻塞主对话线程
+2. **诊断合并到 response_node**：`response_node` 统一处理回复生成（含诊断推理、应急响应、直接问答），简化 LangGraph 图结构
+3. **图节点缩减为 4 个**：`safety_check → interview → response → END/human_review`
+
+### 理由
+1. 减少 LangGraph 节点数 → 降低状态传递开销
+2. Track B 异步不阻塞 Track A → 用户感知延迟 < 500ms
+3. response_node 统一出口 → 便于安全审核和免责声明强制附加
+
+### 影响
+- `workflow/nodes/search_node.py` 保留为工具模块，不再接入主图
+- `workflow/graph.py` 简化为 safety_check→interview→response→END
+- 架构文档更新至 v2.0
 
 ---
 
