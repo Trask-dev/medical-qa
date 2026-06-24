@@ -23,7 +23,7 @@ class EmbeddingConfig:
     model: str = "text-embedding-3-small"
     base_url: str = "https://api.openai.com/v1"
     api_key: str = ""
-    dimensions: int = 1536
+    dimensions: int = 1024
 
 
 def load_embedding_config() -> EmbeddingConfig:
@@ -40,18 +40,40 @@ class EmbeddingEncoder:
     def __init__(self, config: EmbeddingConfig | None = None) -> None:
         self.config = config or load_embedding_config()
         self._cached_dim = self.config.dimensions
+        self._bge_model = None
+
+    def _get_bge(self):
+        if self._bge_model is None:
+            try:
+                from FlagEmbedding import BGEM3FlagModel
+                self._bge_model = BGEM3FlagModel('C:/Users/29098/.cache/huggingface/hub/BAAI/bge-m3', use_fp16=False)
+                self._cached_dim = self._bge_model.model.model.config.hidden_size
+                logger.info("BGE-M3 loaded, dim=%d", self._cached_dim)
+            except ImportError:
+                logger.warning("FlagEmbedding not installed, run: pip install FlagEmbedding")
+            except Exception as e:
+                logger.warning("BGE-M3 load failed: %s", e)
+        return self._bge_model
 
     async def encode(self, texts: list[str]) -> list[list[float]]:
-        if not self.config.api_key:
-            return [[0.0] * self._cached_dim for _ in texts]
-        try:
-            from openai import AsyncOpenAI
-            client = AsyncOpenAI(api_key=self.config.api_key, base_url=self.config.base_url)
-            resp = await client.embeddings.create(model=self.config.model, input=texts)
-            return [d.embedding for d in resp.data]
-        except Exception as e:
-            logger.warning("Embedding API failed, returning zero vectors: %s", e)
-            return [[0.0] * self._cached_dim for _ in texts]
+        if self.config.api_key:
+            try:
+                from openai import AsyncOpenAI
+                client = AsyncOpenAI(api_key=self.config.api_key, base_url=self.config.base_url)
+                resp = await client.embeddings.create(model=self.config.model, input=texts)
+                return [d.embedding for d in resp.data]
+            except Exception as e:
+                logger.warning("Embedding API failed, trying BGE-M3: %s", e)
+
+        bge = self._get_bge()
+        if bge is not None:
+            try:
+                result = bge.encode(texts, batch_size=8, max_length=512)
+                return [vec.tolist() for vec in result['dense_vecs']]
+            except Exception as e:
+                logger.warning("BGE-M3 failed: %s", e)
+
+        return [[0.0] * self._cached_dim for _ in texts]
 
     @property
     def dimensions(self) -> int:

@@ -5,8 +5,11 @@ import asyncio
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+
 from knowledge.kb_loader import load_from_dicts
 from knowledge.vector_store import get_vector_store
+from knowledge.retriever import EmbeddingEncoder
 
 
 async def main():
@@ -21,8 +24,13 @@ async def main():
     loaded = load_from_dicts(entries)
     print(f"Loaded {len(loaded)} entries (skipped {len(entries) - len(loaded)} duplicates/invalid)")
 
+    print("Generating embeddings with BGE-M3...")
+    encoder = EmbeddingEncoder()
+    texts = [e["content"][:512] for e in loaded]
+    vectors = await encoder.encode(texts)
+    print(f"Generated {len(vectors)} vectors, dim={len(vectors[0]) if vectors else 0}")
+
     store = get_vector_store()
-    vectors = [[0.0] * 1536 for _ in loaded]
     metadata = [
         {"knowledge_entry_id": e.get("content_hash", ""), "title": e.get("title", ""),
          "content": e.get("content", ""), "source": e.get("source", ""),

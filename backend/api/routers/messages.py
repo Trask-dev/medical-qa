@@ -63,8 +63,17 @@ async def send_message(session_id: str, req: SendMessageRequest):
 
     # ---- 第2步：累计状态（跨 API 调用持久化） ----
     prev = _session_state.get(session_id, {})
+    
+    # 从消息存储中获取完整的历史消息（转换为工作流引擎需要的格式）
+    history_messages = []
+    for msg in session_messages:
+        role = msg.get("role", "")
+        content = msg.get("content", "")
+        if role and content:
+            history_messages.append({"role": role, "content": content})
+    
     state = {
-        "messages": [{"role": "user", "content": req.content}],
+        "messages": history_messages,
         "intent": "diagnosis",
         "red_flag_raised": prev.get("red_flag_raised", False),
         "safety_checks_passed": prev.get("safety_checks_passed", True),
@@ -132,12 +141,7 @@ async def send_message(session_id: str, req: SendMessageRequest):
         }
         session_messages.append(ai_msg)
 
-    from workflow.nodes.interview_node import _session_options_cache, _search_results_cache
-    options = _session_options_cache.get(session_id, [])
-
-    if len(_session_options_cache) > 100:
-        _session_options_cache.clear()
-        _search_results_cache.clear()
+    options = result.get("options", []) if stage == "collect" else []
 
     return SendMessageResponse(
         message=MessageResponse(**user_msg),

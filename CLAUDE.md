@@ -16,7 +16,7 @@
 | LLM 基座     | DeepSeek-V3       | Qwen/GPT-4o        | 禁止硬编码模型调用     |
 | Agent 框架   | LangGraph         | —                  | AutoGen/CrewAI/LangChain Agent |
 | Web 框架     | FastAPI           | —                  | Flask/Django/Express   |
-| 向量数据库   | Milvus Lite       | Milvus Distributed | ChromaDB/Pgvector      |
+| 向量数据库   | PostgreSQL + pgvector | —               | ChromaDB/Weaviate      |
 | 业务数据库   | PostgreSQL        | —                  | SQLite/MySQL/MongoDB   |
 | 缓存/状态    | Memory (内置)     | Redis              | Memcached              |
 | Embedding    | 阿里 text-v3      | BGE-M3 (本地)      | OpenAI embedding       |
@@ -54,7 +54,7 @@
 │   ├── knowledge/                     # 知识检索层
 │   │   ├── __init__.py
 │   │   ├── retriever.py               # 混合检索（向量+关键词）
-│   │   ├── vector_store.py            # Milvus/pgvector 适配器
+│   │   ├── vector_store.py            # PostgreSQL + pgvector 向量存储
 │   │   └── kb_loader.py               # 知识库导入/更新工具
 │   ├── safety/                        # 安全护栏层（被 nodes/safety_check_node 调用）
 │   │   ├── __init__.py

@@ -702,7 +702,7 @@ components:
             database:
               type: string
               enum: [up, down]
-            milvus:
+            pgvector:
               type: string
               enum: [up, down, not_configured]
             llm:
@@ -867,7 +867,7 @@ paths:
                 version: "1.0.0"
                 components:
                   database: "up"
-                  milvus: "up"
+                  pgvector: "up"
                   llm: "up"
                 uptime_seconds: 86400
 
@@ -1931,7 +1931,7 @@ X-API-Key: mqa_live_7f3a9b2c...
 | 409 | Conflict | 状态冲突（会话已终止等） |
 | 429 | Too Many Requests | 频率限制 |
 | 500 | Internal Server Error | 服务器内部错误 |
-| 502 | Bad Gateway | 上游服务异常(LLM/Milvus) |
+| 502 | Bad Gateway | 上游服务异常(LLM/pgvector (PostgreSQL 扩展)) |
 
 ## 附录 B. 与架构文档的追溯
 

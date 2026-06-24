@@ -8,6 +8,26 @@ from typing import TypedDict, List, Optional, Annotated
 from langgraph.graph.message import add_messages
 
 
+def dict_merge(left: dict, right: dict) -> dict:
+    if isinstance(right, list) and isinstance(left, list):
+        seen = {r.get("knowledge_entry_id", "") for r in left if isinstance(r, dict)}
+        merged = list(left)
+        for item in right:
+            if isinstance(item, dict) and item.get("knowledge_entry_id", "") not in seen:
+                seen.add(item["knowledge_entry_id"])
+                merged.append(item)
+        return merged
+    if not isinstance(right, dict):
+        return left
+    merged = dict(left)
+    for k, v in right.items():
+        if k in merged and isinstance(merged[k], dict) and isinstance(v, dict):
+            merged[k] = dict_merge(merged[k], v)
+        else:
+            merged[k] = v
+    return merged
+
+
 class MedicalQAState(TypedDict):
     """
     LangGraph 工作流核心状态契约。
@@ -17,26 +37,29 @@ class MedicalQAState(TypedDict):
     """
 
     # --- 对话历史 (使用 LangGraph 内置 reducer 自动追加消息) ---
-    messages: Annotated[List[dict], add_messages]
+    messages: Annotated[List[dict], add_messages]  # 全量对话消息
+
+    # --- 问诊选项 ---
+    options: List[dict]  # 当前问题的选择题选项
 
     # --- 流程控制 ---
-    current_stage: str          # 当前对话阶段 (init/collecting/assessing/completed)
-    intent: str                 # 用户意图分类结果
-    route_decision: str         # 路由决策 (问诊/检索/紧急转人工等)
-    round_count: int            # 当前问诊轮次
-    max_rounds: int             # 最大允许问诊轮次
+    current_stage: str  # 对话阶段标识
+    intent: str  # 用户识别意图
+    route_decision: str  # 节点路由判断
+    round_count: int  # 当前问诊轮数
+    max_rounds: int  # 最大问诊上限
 
-    # --- 信息收集与检索 ---
-    collected_info: dict        # 已收集的结构化事实 (主诉、症状、时长等)
-    search_queries: List[str]   # 生成的检索查询列表
-    search_results: List[dict]  # 知识库/外部检索返回的结果
+    # --- 信息收集与检索 (dict_merge: 累计合并，新值覆盖旧值) ---
+    collected_info: Annotated[dict, dict_merge]  # 提取的用户关键信息
+    search_queries: List[str]  # 知识库检索问句
+    search_results: Annotated[List[dict], dict_merge]  # 检索返回内容（列表合并+去重）
+    scenario_context: Annotated[dict, dict_merge]  # 场景全局上下文
 
     # --- 诊断与安全 ---
-    diagnosis_result: Optional[dict]  # 最终诊断/建议结果
-    red_flag_raised: bool             # 是否触发危险信号标志
-    safety_checks_passed: bool        # 安全检查是否通过
+    diagnosis_result: Optional[dict]  # 最终诊断评估结果
+    red_flag_raised: bool  # 是否识别高危风险
+    safety_checks_passed: bool  # 安全校验是否通过
 
     # --- 会话标识 ---
-    session_id: str             # 全局唯一会话ID，用于状态持久化与日志追踪
-    current_scenario: str       # 当前问诊模板名称（general_consultation/pediatric_fever_care等）
-    scenario_context: dict      # 场景配置上下文（模板名/采集项/限制等）, 由_detect_scenario设置
+    session_id: str  # 会话唯一编号
+    current_scenario: str  # 当前业务场景类型

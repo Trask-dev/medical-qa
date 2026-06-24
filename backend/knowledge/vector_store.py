@@ -1,6 +1,6 @@
 """
-向量数据库集成：InMemory / Milvus Lite / Milvus Remote
-支持余弦相似度、欧氏距离，配置从 .env 读取
+向量数据库集成：PostgreSQL + pgvector（主） / InMemory（降级）
+支持余弦相似度，配置从 .env 读取
 """
 
 from __future__ import annotations
@@ -18,25 +18,16 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class VectorStoreConfig:
-    backend: str = "memory"
-    milvus_uri: str = "./data/milvus_lite.db"
-    milvus_token: str = ""
-    collection_name: str = "medical_knowledge"
-    vector_dim: int = 1536
+    backend: str = "pgvector"
+    vector_dim: int = 1024
     metric_type: str = "COSINE"
-    index_type: str = "IVF_FLAT"
-    nlist: int = 128
 
 
 def load_vector_config() -> VectorStoreConfig:
     return VectorStoreConfig(
         backend=os.getenv("VECTOR_BACKEND", "memory"),
-        milvus_uri=os.getenv("MILVUS_URI", "./data/milvus_lite.db"),
-        milvus_token=os.getenv("MILVUS_TOKEN", ""),
-        collection_name=os.getenv("MILVUS_COLLECTION", "medical_knowledge"),
-        vector_dim=int(os.getenv("VECTOR_DIM", "1536")),
+        vector_dim=int(os.getenv("VECTOR_DIM", "1024")),
         metric_type=os.getenv("VECTOR_METRIC", "COSINE"),
-        nlist=int(os.getenv("VECTOR_NLIST", "128")),
     )
 
 
@@ -65,155 +56,6 @@ class VectorStore(ABC):
     async def count(self) -> int: ...
 
 
-# ── Milvus 实现 ───────────────────────
-
-class MilvusVectorStore(VectorStore):
-    def __init__(self, config: VectorStoreConfig | None = None) -> None:
-        self.config = config or load_vector_config()
-        self._col = None
-
-    @property
-    def _collection(self):
-        if self._col is None:
-            self._col = self._init_milvus()
-        return self._col
-
-    def _init_milvus(self):
-        try:
-            from pymilvus import connections, Collection, FieldSchema, CollectionSchema, DataType
-            is_remote = ":" in self.config.milvus_uri.replace("./", "").replace("\\", "")
-            if is_remote:
-                connections.connect(
-                    alias="default",
-                    uri=self.config.milvus_uri,
-                    token=self.config.milvus_token or None,
-                )
-            else:
-                local_path = self.config.milvus_uri
-                os.makedirs(os.path.dirname(local_path) or ".", exist_ok=True)
-                connections.connect(alias="default", uri=local_path)
-
-            if not self._collection_exists(Collection):
-                fields = [
-                    FieldSchema(name="id", dtype=DataType.VARCHAR, max_length=128, is_primary=True),
-                    FieldSchema(name="vector", dtype=DataType.FLOAT_VECTOR, dim=self.config.vector_dim),
-                    FieldSchema(name="content", dtype=DataType.VARCHAR, max_length=65535),
-                    FieldSchema(name="source", dtype=DataType.VARCHAR, max_length=512),
-                    FieldSchema(name="source_type", dtype=DataType.VARCHAR, max_length=64),
-                    FieldSchema(name="title", dtype=DataType.VARCHAR, max_length=1024),
-                    FieldSchema(name="authority_score", dtype=DataType.FLOAT),
-                    FieldSchema(name="freshness_score", dtype=DataType.FLOAT),
-                    FieldSchema(name="publish_year", dtype=DataType.INT32),
-                ]
-                schema = CollectionSchema(fields, description="Medical knowledge base")
-                col = Collection(name=self.config.collection_name, schema=schema)
-                index_params = {
-                    "metric_type": self.config.metric_type,
-                    "index_type": self.config.index_type,
-                    "params": {"nlist": self.config.nlist},
-                }
-                col.create_index(field_name="vector", index_params=index_params)
-                col.load()
-                logger.info("Milvus collection '%s' created with %s index", self.config.collection_name, self.config.index_type)
-                return col
-
-            col = Collection(name=self.config.collection_name)
-            col.load()
-            logger.info("Milvus collection '%s' loaded, count=%d", self.config.collection_name, col.num_entities)
-            return col
-
-        except ImportError:
-            logger.warning("pymilvus not installed, falling back to InMemoryVectorStore")
-            return None
-
-    def _collection_exists(self, Collection) -> bool:
-        from pymilvus import utility
-        return utility.has_collection(self.config.collection_name)
-
-    async def create_collection(self) -> None:
-        self._collection
-
-    async def insert(self, vectors: list[list[float]], metadata: list[dict]) -> list[str]:
-        col = self._collection
-        if col is None:
-            return await _fallback_store(config=self.config).insert(vectors, metadata)
-        ids = [m.get("knowledge_entry_id", f"ke_{i}") for i, m in enumerate(metadata)]
-        rows = [
-            ids,
-            vectors,
-            [m.get("content", "") for m in metadata],
-            [m.get("source", "") for m in metadata],
-            [m.get("source_type", "") for m in metadata],
-            [m.get("title", "") for m in metadata],
-            [m.get("authority_score", 0.5) for m in metadata],
-            [m.get("freshness_score", 1.0) for m in metadata],
-            [m.get("publish_year", 2024) for m in metadata],
-        ]
-        col.insert(rows)
-        col.flush()
-        logger.info("Inserted %d vectors into Milvus", len(ids))
-        return ids
-
-    async def search(self, query_vector: list[float], top_k: int = 10,
-                     filters: dict | None = None) -> list[dict]:
-        col = self._collection
-        if col is None:
-            return await _fallback_store(config=self.config).search(query_vector, top_k)
-        expr = _build_filter_expr(filters) if filters else None
-        results = col.search(
-            data=[query_vector], anns_field="vector",
-            param={"metric_type": self.config.metric_type, "params": {"nprobe": 16}},
-            limit=top_k, expr=expr,
-            output_fields=["content", "source", "source_type", "title",
-                           "authority_score", "freshness_score", "publish_year"],
-        )
-        output = []
-        for hits in results:
-            for h in hits:
-                output.append({
-                    "id": h.id, "score": h.distance if self.config.metric_type == "IP" else 1 - h.distance,
-                    "metadata": {
-                        "content": h.entity.get("content", ""),
-                        "source": h.entity.get("source", ""),
-                        "source_type": h.entity.get("source_type", ""),
-                        "title": h.entity.get("title", ""),
-                        "authority_score": h.entity.get("authority_score", 0.5),
-                        "freshness_score": h.entity.get("freshness_score", 1.0),
-                        "publish_year": h.entity.get("publish_year", 2024),
-                    },
-                })
-        return output
-
-    async def update(self, id: str, vector: list[float], metadata: dict) -> bool:
-        col = self._collection
-        if col is None:
-            return False
-        try:
-            col.delete(f'id == "{id}"')
-            await self.insert([vector], [metadata])
-            return True
-        except Exception as e:
-            logger.error("Milvus update failed for %s: %s", id, e)
-            return False
-
-    async def delete(self, ids: list[str]) -> int:
-        col = self._collection
-        if col is None:
-            return await _fallback_store(config=self.config).delete(ids)
-        expr = " || ".join(f'id == "{i}"' for i in ids)
-        col.delete(expr)
-        col.flush()
-        return len(ids)
-
-    async def count(self) -> int:
-        col = self._collection
-        if col is None:
-            return await _fallback_store(config=self.config).count()
-        col.flush()
-        return col.num_entities
-
-
-# ── 内存实现 (降级) ───────────────────
 
 class InMemoryVectorStore(VectorStore):
     def __init__(self, config: VectorStoreConfig | None = None) -> None:
@@ -258,27 +100,125 @@ class InMemoryVectorStore(VectorStore):
         return len(self._store)
 
 
+# ── PostgreSQL + pgvector 实现 ──────────
+
+class PGVectorStore(VectorStore):
+    def __init__(self, config: VectorStoreConfig | None = None) -> None:
+        self.config = config or load_vector_config()
+        self._table = "knowledge_vectors"
+        self._engine = None
+
+    async def _get_engine(self):
+        if self._engine is None:
+            from persistence.database import _get_engine
+            self._engine = _get_engine()
+            async with self._engine.begin() as conn:
+                from sqlalchemy import text
+                await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+                await conn.execute(text(f"""
+                    CREATE TABLE IF NOT EXISTS {self._table} (
+                        id TEXT PRIMARY KEY,
+                        embedding vector({self.config.vector_dim}),
+                        content TEXT,
+                        source TEXT,
+                        source_type TEXT,
+                        title TEXT,
+                        authority_score FLOAT DEFAULT 0.5,
+                        freshness_score FLOAT DEFAULT 1.0,
+                        publish_year INT DEFAULT 2024
+                    )
+                """))
+        return self._engine
+
+    async def create_collection(self) -> None:
+        await self._get_engine()
+
+    async def insert(self, vectors: list[list[float]], metadata: list[dict]) -> list[str]:
+        from sqlalchemy import text
+        engine = await self._get_engine()
+        ids = []
+        async with engine.begin() as conn:
+            for vec, meta in zip(vectors, metadata):
+                vid = meta.get("knowledge_entry_id", f"ke_{len(ids)}")
+                emb_str = f"'[{','.join(str(x) for x in vec)}]'"
+                await conn.execute(text(
+                    f"INSERT INTO {self._table} (id, embedding, content, source, source_type, "
+                    f"title, authority_score, freshness_score, publish_year) "
+                    f"VALUES (:id, {emb_str}::vector, :content, :source, :stype, :title, :auth, :fresh, :year) "
+                    f"ON CONFLICT (id) DO UPDATE SET embedding=EXCLUDED.embedding, content=EXCLUDED.content"
+                ), {"id": vid, "content": meta.get("content", ""),
+                    "source": meta.get("source", ""), "stype": meta.get("source_type", ""),
+                    "title": meta.get("title", ""), "auth": meta.get("authority_score", 0.5),
+                    "fresh": meta.get("freshness_score", 1.0), "year": meta.get("publish_year", 2024)})
+                ids.append(vid)
+        return ids
+
+    async def search(self, query_vector: list[float], top_k: int = 10,
+                     filters: dict | None = None) -> list[dict]:
+        from sqlalchemy import text
+        vec_str = f"'[{','.join(str(x) for x in query_vector)}]'"
+        engine = await self._get_engine()
+        async with engine.connect() as conn:
+            rows = await conn.execute(text(
+                f"SELECT id, 1 - (embedding <=> {vec_str}::vector) AS score, content, source, "
+                f"source_type, title, authority_score, freshness_score, publish_year "
+                f"FROM {self._table} ORDER BY embedding <=> {vec_str}::vector LIMIT :k"
+            ), {"k": top_k})
+            results = rows.fetchall()
+        return [{"id": r[0], "score": r[1],
+                 "metadata": {"content": r[2], "source": r[3], "source_type": r[4],
+                              "title": r[5], "authority_score": r[6],
+                              "freshness_score": r[7], "publish_year": r[8]}}
+                for r in results]
+
+    async def update(self, id: str, vector: list[float], metadata: dict) -> bool:
+        from sqlalchemy import text
+        engine = await self._get_engine()
+        async with engine.begin() as conn:
+            result = await conn.execute(text(
+                f"UPDATE {self._table} SET embedding=:emb, content=:content, source=:src, "
+                f"source_type=:st, title=:t, authority_score=:as, freshness_score=:fs WHERE id=:id"
+            ), {"emb": vector, "content": metadata.get("content", ""), "src": metadata.get("source", ""),
+                "st": metadata.get("source_type", ""), "t": metadata.get("title", ""),
+                "as": metadata.get("authority_score", 0.5), "fs": metadata.get("freshness_score", 1.0), "id": id})
+        return result.rowcount > 0
+
+    async def delete(self, ids: list[str]) -> int:
+        from sqlalchemy import text
+        engine = await self._get_engine()
+        async with engine.begin() as conn:
+            result = await conn.execute(text(f"DELETE FROM {self._table} WHERE id = ANY(:ids)"), {"ids": ids})
+        return result.rowcount
+
+    async def count(self) -> int:
+        from sqlalchemy import text
+        engine = await self._get_engine()
+        async with engine.connect() as conn:
+            row = (await conn.execute(text(f"SELECT COUNT(*) FROM {self._table}"))).fetchone()
+        return row[0] if row else 0
+
+
 # ── 工厂 ──────────────────────────────
 
-_fallback_store: InMemoryVectorStore | None = None
+_cached_memory_store: InMemoryVectorStore | None = None
 
 
-def _fallback_store(config: VectorStoreConfig | None = None) -> InMemoryVectorStore:
-    global _fallback_store
-    if _fallback_store is None:
-        _fallback_store = InMemoryVectorStore(config)
-    return _fallback_store
+def _get_memory_store(config: VectorStoreConfig | None = None) -> InMemoryVectorStore:
+    global _cached_memory_store
+    if _cached_memory_store is None:
+        _cached_memory_store = InMemoryVectorStore(config)
+    return _cached_memory_store
 
 
 def get_vector_store(backend: str = "") -> VectorStore:
     config = load_vector_config()
     backend = backend or config.backend
-    if backend == "milvus":
-        store = MilvusVectorStore(config)
-        if store._collection is not None:
-            return store
-        logger.info("Milvus unavailable, falling back to memory store")
-    return InMemoryVectorStore(config)
+    if backend == "pgvector":
+        try:
+            return PGVectorStore(config)
+        except Exception as e:
+            logger.warning("pgvector unavailable (%s), falling back to memory", e)
+    return _get_memory_store(config)
 
 
 # ── 距离计算 ──────────────────────────
@@ -293,13 +233,3 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
 def _euclidean_score(a: list[float], b: list[float]) -> float:
     dist = sum((x - y) ** 2 for x, y in zip(a, b)) ** 0.5
     return 1.0 / (1.0 + dist)
-
-
-def _build_filter_expr(filters: dict) -> str:
-    parts = []
-    for k, v in filters.items():
-        if isinstance(v, str):
-            parts.append(f'{k} == "{v}"')
-        elif isinstance(v, (int, float)):
-            parts.append(f"{k} == {v}")
-    return " && ".join(parts) if parts else ""

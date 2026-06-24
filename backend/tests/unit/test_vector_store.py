@@ -2,7 +2,7 @@ import pytest
 import pytest_asyncio
 from knowledge.vector_store import (
     InMemoryVectorStore, VectorStoreConfig,
-    _cosine_similarity, _euclidean_score, _build_filter_expr,
+    _cosine_similarity, _euclidean_score,
 )
 
 
@@ -82,18 +82,10 @@ async def test_euclidean_score():
     assert score == 1.0
 
 
-def test_build_filter_expr():
-    expr = _build_filter_expr({"source_type": "guideline", "publish_year": 2023})
-    assert "source_type" in expr
-    assert "guideline" in expr
-    assert "2023" in expr
-    assert "&&" in expr
-
-
 def test_vector_store_config_defaults():
     cfg = VectorStoreConfig()
-    assert cfg.backend == "memory"
-    assert cfg.vector_dim == 1536
+    assert cfg.backend == "pgvector"
+    assert cfg.vector_dim == 1024
     assert cfg.metric_type == "COSINE"
 
 

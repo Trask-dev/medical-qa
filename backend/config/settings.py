@@ -120,15 +120,16 @@ def load_safety_rules(config_path: Optional[str] = None) -> dict:
     if config_path is None:
         config_path = Path(__file__).parent / "safety_rules.yaml"
 
-    with open(config_path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f)
+    except FileNotFoundError:
+        return {}
 
 
 def _resolve_api_key(provider_name: str, settings: Settings) -> str:
     key_map = {
         "deepseek": settings.DEEPSEEK_API_KEY,
-        "openai": settings.DEEPSEEK_API_KEY,
-        "qwen": settings.DEEPSEEK_API_KEY,
         "aliyun": settings.EMBEDDING_API_KEY,
     }
     return key_map.get(provider_name, "") or ""

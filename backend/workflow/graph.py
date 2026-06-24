@@ -33,7 +33,7 @@ def build_workflow():
 
     # 问诊循环：信息不足→继续追问，完整/需输出→跳转回复
     workflow.add_conditional_edges("interview", check_interview_complete, {
-        "interview": "interview",
+        "interview":  "interview",
         "response": "response",
     })
 

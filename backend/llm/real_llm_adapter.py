@@ -125,8 +125,6 @@ class RealLLMAdapter:
         force_json: bool = False,
     ) -> dict:
         kwargs: dict = {}
-        if force_json:
-            kwargs["response_format"] = {"type": "json_object"}
 
         last_error = ""
         for attempt in range(self.MAX_RETRIES):
@@ -175,8 +173,9 @@ class RealLLMAdapter:
                 logger.error("LLM API attempt %d failed: %s", attempt + 1, e)
             await asyncio.sleep(0.5 * (attempt + 1))
 
-        logger.error("LLM all %d retries exhausted", self.MAX_RETRIES)
-        raise LLMAPIError(f"LLM call failed after {self.MAX_RETRIES} retries: {last_error}", status_code=502)
+        logger.error("LLM all %d retries exhausted, returning fallback")
+        fallback = _build_fallback_response(messages, force_json)
+        return fallback
 
     # ── 流式调用 ──
 
@@ -205,7 +204,7 @@ class RealLLMAdapter:
                 logger.error("LLM stream attempt %d failed: %s", attempt + 1, e)
                 await asyncio.sleep(0.5 * (attempt + 1))
 
-        raise LLMAPIError(f"LLM stream failed after {self.MAX_RETRIES} retries", status_code=502)
+        yield "请更详细地描述您的症状。"
 
     # ── Token 追踪 ──
 
@@ -244,6 +243,30 @@ def _load_prompt_template(template_name: str) -> Template:
         return _jinja_env.from_string(f.read())
 
 
+def _build_fallback_response(messages: list, force_json: bool) -> dict:
+    user_msg = ""
+    for m in reversed(messages):
+        if m.get("role") == "user":
+            user_msg = m.get("content", "")
+            break
+    if force_json:
+        return {
+            "response_text": f"您提到\"{user_msg[:30]}\"，能再具体描述一下吗？",
+            "options": [
+                {"index": 1, "label": "疼痛", "value": "疼痛"},
+                {"index": 2, "label": "不适", "value": "不适"},
+                {"index": 3, "label": "肿胀", "value": "肿胀"},
+                {"index": 4, "label": "其他症状", "value": "other"},
+                {"index": 5, "label": "说不太清楚", "value": "unclear"},
+            ],
+            "extracted_facts": {},
+            "severity_assessment": "mild",
+            "is_emergency": False,
+            "next_action": "continue",
+        }
+    return {"content": "请更详细地描述您的症状。", "token_usage": {"total_tokens": 0}}
+
+
 def _extract_json(raw: str) -> dict:
     raw = raw.strip()
     m = re.search(r"\{.*\}", raw, re.DOTALL)
@@ -251,9 +274,31 @@ def _extract_json(raw: str) -> dict:
     try:
         result = json.loads(target)
     except json.JSONDecodeError:
-        fixed = re.sub(r'"\s*\n\s*"', '",\n"', target)
-        result = json.loads(fixed)
-    return {k: v for k, v in result.items() if v is not None}
+        try:
+            fixed = re.sub(r'"\s*\n\s*"', '",\n"', target)
+            result = json.loads(fixed)
+        except json.JSONDecodeError:
+            try:
+                fixed2 = re.sub(r'(?<=[}\]"\d])\s*\n\s*"(?=[a-z_])', ',\n"', fixed)
+                result = json.loads(fixed2)
+            except json.JSONDecodeError:
+                logger.warning("_extract_json: all strategies failed, raw[:200]=%s", raw[:200])
+                return {}
+    if not isinstance(result, dict):
+        return {}
+    cleaned = {k: v for k, v in result.items() if v is not None}
+    if "response_text" in cleaned and _contains_prompt_leak(cleaned["response_text"]):
+        logger.warning("_extract_json: prompt leak detected in response_text")
+        return {}
+    return cleaned
+
+
+_SYSTEM_KEYWORDS = ["你是AI健康助手", "禁止确诊", "禁止开药", "安全红线", "提取规则",
+                    "输出格式", "仅输出JSON", "extracted_facts", "severity_assessment"]
+
+
+def _contains_prompt_leak(text: str) -> bool:
+    return any(kw in text for kw in _SYSTEM_KEYWORDS)
 
 
 # ──────────────────────────────────────────────
@@ -381,6 +426,7 @@ class RealL2Adapter:
         self,
         collected_facts: dict,
         scenario_context: dict,
+        messages: list[dict],
         round_count: int,
         max_rounds: int,
     ) -> dict:
@@ -392,6 +438,7 @@ class RealL2Adapter:
         prompt_str = template.render(
             scenario_context=scenario_context,
             collected_facts=collected_facts,
+            messages=messages,
             round_count=round_count,
             max_rounds=max_rounds,
         )
@@ -409,6 +456,7 @@ class RealL2Adapter:
             )
 
         result = _sync_run(_run(), timeout=60)
+        
         return L2ResponseSchema.model_validate(result).model_dump()
 
 

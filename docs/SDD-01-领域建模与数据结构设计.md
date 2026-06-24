@@ -62,7 +62,7 @@
 | **MedicalRecord** | 业务域 | PostgreSQL (medical_records表 JSONB) | 随问诊构建，每轮更新版本 |
 | **DiagnosisResult** | 业务域 | PostgreSQL (JSONB，可存于medical_records或独立表) | 诊断阶段生成，不可变 |
 | **AgentState** | 会话域 | LangGraph Memory（内存/Redis） | 会话级瞬时，断线可恢复 |
-| **KnowledgeEntry** | 知识域 | PostgreSQL (knowledge_entries表) + Milvus (向量) | 预入库，长期维护 |
+| **KnowledgeEntry** | 知识域 | PostgreSQL (knowledge_entries表) + pgvector (PostgreSQL 扩展) (向量) | 预入库，长期维护 |
 | **AuditLog** | 贯穿域 | PostgreSQL (audit_logs表) | 每次Agent调用追加，不可变 |
 
 ---
@@ -265,7 +265,7 @@
 
 ### 2.5 KnowledgeEntry — 知识库条目实体
 
-**职责：** 存储医学知识库中的每一条知识条目，同时管理Milvus向量索引的关联。
+**职责：** 存储医学知识库中的每一条知识条目，同时管理pgvector (PostgreSQL 扩展)向量索引的关联。
 
 | # | 字段名 | 类型 | 含义 | 约束 | 标注 |
 |---|--------|------|------|------|------|
@@ -277,7 +277,7 @@
 | 6 | `version` | `VARCHAR(50)` | 指南版本号 | NULLABLE（教材/综述可不填） | — |
 | 7 | `content` | `TEXT` | 知识片段正文 | NOT NULL | — |
 | 8 | `content_hash` | `VARCHAR(64)` | 内容SHA256哈希（用于去重） | NOT NULL, UNIQUE | — |
-| 9 | `embedding_id` | `VARCHAR(255)` | Milvus中对应向量ID | NULLABLE（待向量化时填充） | — |
+| 9 | `embedding_id` | `VARCHAR(255)` | pgvector (PostgreSQL 扩展)中对应向量ID | NULLABLE（待向量化时填充） | — |
 | 10 | `authority_score` | `FLOAT` | 权威性评分 | DEFAULT 0.5, RANGE [0.0, 1.0] | — |
 | 11 | `freshness_score` | `FLOAT` | 时效性评分（自动计算） | RANGE [0.0, 1.0] | — |
 | 12 | `tags` | `TEXT[]` | 标签（疾病、症状、药物等） | DEFAULT '{}' | — |
@@ -492,7 +492,7 @@ erDiagram
         INTEGER publish_year "发布年份"
         TEXT content "知识片段正文"
         VARCHAR content_hash "SHA256哈希 [UNIQUE:去重]"
-        VARCHAR embedding_id "Milvus向量ID [nullable]"
+        VARCHAR embedding_id "pgvector (PostgreSQL 扩展)向量ID [nullable]"
         FLOAT authority_score "权威性评分 [0.0-1.0]"
         FLOAT freshness_score "时效性评分 [0.0-1.0]"
         TEXT_ARRAY tags "标签 [疾病/症状/药物]"

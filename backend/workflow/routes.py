@@ -72,7 +72,7 @@ def check_interview_complete(state: dict) -> str:
     if state.get("red_flag_raised"):
         return "response"
     current_stage = state.get("current_stage", "")
-    if current_stage == "diagnose":
+    if current_stage == "diagnose" or current_stage == "emergency":
         return "response"
     if current_stage == "collect" and _last_is_assistant(state.get("messages", [])):
         return "response"

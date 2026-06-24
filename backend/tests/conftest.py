@@ -21,7 +21,7 @@ import pytest
 class MockL2Adapter:
     _round = 0
 
-    def generate_question(self, collected_facts, scenario_context, round_count, max_rounds):
+    def generate_question(self, collected_facts, scenario_context, round_count, max_rounds, messages=None):
         self._round = round_count
         chief = collected_facts.get("patient_info", {}).get("chief_complaint", "")
         location = collected_facts.get("patient_info", {}).get("complaint_location", "")
@@ -69,7 +69,7 @@ class MockLLMAdapter:
 
 @pytest.fixture(autouse=True)
 def _mock_llm_adapters(monkeypatch):
-    monkeypatch.setattr("workflow.nodes.interview_node._get_l2_adapter", lambda: MockL2Adapter())
+    monkeypatch.setattr("workflow.nodes.interview_node._adapter", MockL2Adapter())
     monkeypatch.setattr("workflow.diagnosis_agent._get_adapter", lambda: MockLLMAdapter())
 
 

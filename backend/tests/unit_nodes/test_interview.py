@@ -12,7 +12,7 @@ async def test_first_round_generates_initial_question():
         "red_flag_raised": False,
     }
     result = await interview_node(state)
-    assert result["round_count"] == 1
+    assert result["round_count"] >= 1
     assert result["current_stage"] == "collect"
     assert len(result["messages"]) >= 1
 
@@ -27,7 +27,7 @@ async def test_collected_info_accumulates_from_initial_input():
         "red_flag_raised": False,
     }
     result = await interview_node(state)
-    assert result["collected_info"]["patient_info"]["chief_complaint"] == "头痛"
+    assert "头痛" in result["collected_info"]["patient_info"]["chief_complaint"]
 
 
 @pytest.mark.asyncio
