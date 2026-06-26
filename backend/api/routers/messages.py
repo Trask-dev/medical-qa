@@ -91,7 +91,17 @@ async def send_message(session_id: str, req: SendMessageRequest):
     }
 
     if not state.get("scenario_context"):
-        state["scenario_context"] = _detect_scenario(req.content)
+        sc = _detect_scenario(req.content)
+        state["scenario_context"] = sc
+        # 将场景配置中的参数应用到 state（仅首次）
+        if sc.get("use_expert"):
+            state["use_expert"] = True
+        if sc.get("max_rounds"):
+            state["max_rounds"] = sc["max_rounds"]
+
+    # 确保 use_expert 从持久化的 scenario_context 中恢复到 state
+    if state.get("scenario_context", {}).get("use_expert"):
+        state["use_expert"] = True
 
     # ---- 第3步：执行AI工作流 ----
     result = await graph.ainvoke(state)
@@ -99,7 +109,7 @@ async def send_message(session_id: str, req: SendMessageRequest):
     _session_state[session_id] = {
         "collected_info": result.get("collected_info", {}),
         "round_count": result.get("round_count", 0),
-        "max_rounds": result.get("max_rounds", 5),
+        "max_rounds": result.get("max_rounds", prev.get("max_rounds", 5)),
         "current_stage": result.get("current_stage", "init"),
         "red_flag_raised": result.get("red_flag_raised", False),
         "safety_checks_passed": result.get("safety_checks_passed", True),
@@ -108,7 +118,7 @@ async def send_message(session_id: str, req: SendMessageRequest):
         "diagnosis_result": result.get("diagnosis_result"),
         "route_decision": result.get("route_decision", ""),
         "current_scenario": result.get("current_scenario", "general_consultation"),
-        "scenario_context": result.get("scenario_context", {}),
+        "scenario_context": result.get("scenario_context", prev.get("scenario_context", {})),
     }
 
     # ---- 第4步：根据引擎输出决定前端下一步动作 ----
@@ -210,8 +220,14 @@ async def stream_events(session_id: str):
 
 
 def _detect_scenario(user_msg: str) -> dict:
-    return {"scenario_id": "general_consultation", "prompt_template": "general_consultation",
-            "display_name": "通用健康咨询", "max_rounds": 8}
+    return {
+        "scenario_id": "general_consultation",
+        "prompt_template": "general_consultation",
+        "display_name": "通用健康咨询",
+        "max_rounds": 10,
+        "use_expert": True,        # 启用专家模式：基础阶段结束后进入专家问诊
+        "basic_max_rounds": 5,     # 基础问诊最多 5 轮，之后 LLM 判断结束或达上限→专家
+    }
 
 
 def _extract_assistant_reply(messages: list) -> str:

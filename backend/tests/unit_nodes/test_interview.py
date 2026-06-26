@@ -1,5 +1,5 @@
 import pytest
-from workflow.nodes.interview_node import interview_node
+from workflow.nodes.basic_interview_node import basic_interview_node
 
 
 @pytest.mark.asyncio
@@ -11,7 +11,7 @@ async def test_first_round_generates_initial_question():
         "max_rounds": 5,
         "red_flag_raised": False,
     }
-    result = await interview_node(state)
+    result = await basic_interview_node(state)
     assert result["round_count"] >= 1
     assert result["current_stage"] == "collect"
     assert len(result["messages"]) >= 1
@@ -26,7 +26,7 @@ async def test_collected_info_accumulates_from_initial_input():
         "max_rounds": 5,
         "red_flag_raised": False,
     }
-    result = await interview_node(state)
+    result = await basic_interview_node(state)
     assert "头痛" in result["collected_info"]["patient_info"]["chief_complaint"]
 
 
@@ -42,7 +42,7 @@ async def test_max_rounds_terminates_interview():
         "max_rounds": 5,
         "red_flag_raised": False,
     }
-    result = await interview_node(state)
+    result = await basic_interview_node(state)
     assert result["current_stage"] == "diagnose"
 
 
@@ -55,5 +55,5 @@ async def test_red_flag_during_interview_triggers_emergency():
         "max_rounds": 5,
         "red_flag_raised": True,
     }
-    result = await interview_node(state)
+    result = await basic_interview_node(state)
     assert result["current_stage"] == "emergency"

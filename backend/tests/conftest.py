@@ -69,7 +69,8 @@ class MockLLMAdapter:
 
 @pytest.fixture(autouse=True)
 def _mock_llm_adapters(monkeypatch):
-    monkeypatch.setattr("workflow.nodes.interview_node._adapter", MockL2Adapter())
+    monkeypatch.setattr("workflow.nodes.basic_interview_node._adapter", MockL2Adapter())
+    monkeypatch.setattr("workflow.nodes.expert_interview_node._adapter", MockL2Adapter())
     monkeypatch.setattr("workflow.diagnosis_agent._get_adapter", lambda: MockLLMAdapter())
 
 

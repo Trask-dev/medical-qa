@@ -1,14 +1,24 @@
 """
 医疗问答 AI 工作流编排器（LangGraph）
 
-核心流转：safety_check → interview(循环) → response → END/human_review
+阶段性串行流程：
+  safety_check → basic_interview(循环) → expert_interview(循环) → response → END
+
+基础问诊完成（LLM判断或达轮次上限）后，若 use_expert=True 则进入专家问诊，
+专家问诊完成后再进入诊断报告。
 """
 from workflow.state import MedicalQAState
 from workflow.nodes.safety_check_node import safety_check_node
-from workflow.nodes.interview_node import interview_node
+from workflow.nodes.basic_interview_node import basic_interview_node
+from workflow.nodes.expert_interview_node import expert_interview_node
 from workflow.nodes.response_node import response_node
 from workflow.nodes.human_review_node import human_review_node
-from workflow.routes import route_by_intent, check_interview_complete, after_response
+from workflow.routes import (
+    route_by_intent,
+    check_basic_interview_complete,
+    check_expert_interview_complete,
+    after_response,
+)
 
 
 def build_workflow():
@@ -17,23 +27,31 @@ def build_workflow():
     workflow = StateGraph(MedicalQAState)
 
     # 注册节点
-    workflow.add_node("safety_check", safety_check_node)   # 安全安检入口
-    workflow.add_node("interview", interview_node)         # 多轮问诊收集信息
-    workflow.add_node("response", response_node)           # 生成回复
-    workflow.add_node("human_review", human_review_node)   # 人工兜底审核
+    workflow.add_node("safety_check", safety_check_node)           # 安全安检入口
+    workflow.add_node("basic_interview", basic_interview_node)     # 阶段1：基础问诊（纯 prompt 模板）
+    workflow.add_node("expert_interview", expert_interview_node)   # 阶段2：专家问诊（RAG 知识增强）
+    workflow.add_node("response", response_node)                   # 阶段3：生成诊断报告
+    workflow.add_node("human_review", human_review_node)           # 人工兜底审核
 
     # 统一从安检进入
     workflow.set_entry_point("safety_check")
 
-    # 安检后分流：医疗意图→问诊，否则→直接回复
+    # 安检后分流：医疗意图→基础问诊，否则→直接回复
     workflow.add_conditional_edges("safety_check", route_by_intent, {
-        "interview": "interview",
+        "basic_interview": "basic_interview",
         "response": "response",
     })
 
-    # 问诊循环：信息不足→继续追问，完整/需输出→跳转回复
-    workflow.add_conditional_edges("interview", check_interview_complete, {
-        "interview":  "interview",
+    # 阶段1：基础问诊循环 → 完成后进入专家问诊（或直接诊断）
+    workflow.add_conditional_edges("basic_interview", check_basic_interview_complete, {
+        "basic_interview": "basic_interview",
+        "expert_interview": "expert_interview",
+        "response": "response",
+    })
+
+    # 阶段2：专家问诊循环 → 完成后进入诊断报告
+    workflow.add_conditional_edges("expert_interview", check_expert_interview_complete, {
+        "expert_interview": "expert_interview",
         "response": "response",
     })
 
