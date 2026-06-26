@@ -93,8 +93,8 @@ class DiagnosisAgent:
                 raise RuntimeError("LLM returned empty content")
             _check_safe(content)
 
-            # 5. 添加免责声明并返回
-            return content + f"\n\n{disclaimer}"
+            # 5. 返回结果（免责声明由 prompt 模板统一生成）
+            return content
 
         except (LLMAPIError, LLMRateLimitError, LLMTimeoutError):
             raise  # 直接向上抛出LLM相关错误
