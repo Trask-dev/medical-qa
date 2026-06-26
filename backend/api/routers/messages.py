@@ -1,33 +1,24 @@
 # =============================================================================
 # 问诊对话 API 路由层（FastAPI Router）
 #
-# 这个文件是前端与AI问诊引擎之间的"翻译官"和"调度台"。
-# 负责接收HTTP请求、组装初始状态、调用工作流引擎、格式化响应结果。
-#
-# 包含三个核心接口：
-# 1. POST /messages：发送消息并触发一轮完整的AI问诊推理
-# 2. GET  /messages：分页查询历史消息记录
-# 3. GET  /stream：SSE流式推送实时事件（当前为占位实现）
-#
-# ⚠️ 注意：_messages_store 是内存字典，仅用于开发调试
-#    生产环境必须替换为 Redis / PostgreSQL 等持久化存储
+# 会话状态和消息已接入 PostgreSQL 持久化存储（persistence/session_store.py）。
 # =============================================================================
 
 import uuid
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
 from api.schemas.message import SendMessageRequest, SendMessageResponse, MessageResponse
 from workflow.graph import build_workflow
+from persistence.session_store import (
+    load_state, save_state, append_message, load_messages,
+)
 
 router = APIRouter()
 
-# 内存级消息存储（开发用，重启即丢失）
-_messages_store: dict[str, list[dict]] = {}
-_session_state: dict[str, dict] = {}
 
 def _get_graph():
     return build_workflow()
@@ -46,27 +37,27 @@ async def send_message(session_id: str, req: SendMessageRequest):
     """
     graph = _get_graph()
 
-    # ---- 第1步：持久化用户消息 ----
-    session_messages = _messages_store.setdefault(session_id, [])
+    # ---- 第1步：从 DB 加载累积状态 ----
+    prev = await load_state(session_id)
+
+    # ---- 第2步：持久化用户消息 ----
     user_msg = {
         "id": str(uuid.uuid4()),
         "session_id": session_id,
-        "round_number": 0,           # TODO: 应从已有消息数自动递增
+        "round_number": prev.get("round_count", 0),
         "role": "user",
         "content": req.content,
         "content_type": req.content_type,
         "agent_source": None,
         "token_count": None,
-        "created_at": datetime.utcnow(),
+        "created_at": datetime.now(timezone.utc),
     }
-    session_messages.append(user_msg)
+    await append_message(session_id, user_msg)
 
-    # ---- 第2步：累计状态（跨 API 调用持久化） ----
-    prev = _session_state.get(session_id, {})
-    
-    # 从消息存储中获取完整的历史消息（转换为工作流引擎需要的格式）
+    # 从 DB 加载完整历史消息（转换为工作流引擎需要的格式）
+    all_msgs, _ = await load_messages(session_id, limit=200)
     history_messages = []
-    for msg in session_messages:
+    for msg in all_msgs:
         role = msg.get("role", "")
         content = msg.get("content", "")
         if role and content:
@@ -106,7 +97,8 @@ async def send_message(session_id: str, req: SendMessageRequest):
     # ---- 第3步：执行AI工作流 ----
     result = await graph.ainvoke(state)
 
-    _session_state[session_id] = {
+    # ---- 保存状态到 DB ----
+    await save_state(session_id, {
         "collected_info": result.get("collected_info", {}),
         "round_count": result.get("round_count", 0),
         "max_rounds": result.get("max_rounds", prev.get("max_rounds", 5)),
@@ -119,7 +111,7 @@ async def send_message(session_id: str, req: SendMessageRequest):
         "route_decision": result.get("route_decision", ""),
         "current_scenario": result.get("current_scenario", "general_consultation"),
         "scenario_context": result.get("scenario_context", prev.get("scenario_context", {})),
-    }
+    })
 
     # ---- 第4步：根据引擎输出决定前端下一步动作 ----
     red_flag = result.get("red_flag_raised", False)
@@ -147,9 +139,9 @@ async def send_message(session_id: str, req: SendMessageRequest):
             "content_type": "text",
             "agent_source": "system",
             "token_count": None,
-            "created_at": datetime.utcnow(),
+            "created_at": datetime.now(timezone.utc),
         }
-        session_messages.append(ai_msg)
+        await append_message(session_id, ai_msg)
 
     options = result.get("options", []) if stage == "collect" else []
 
@@ -169,18 +161,10 @@ async def send_message(session_id: str, req: SendMessageRequest):
 
 @router.get("/sessions/{session_id}/messages")
 async def list_messages(session_id: str, limit: int = 20, offset: int = 0, round_number: int = None):
-    """
-    查询历史消息：支持分页 + 按轮次过滤。
-    用于前端刷新页面后恢复对话上下文。
-    """
-    all_msgs = _messages_store.get(session_id, [])
-
-    # 如果指定了轮次号，只返回该轮的消息
-    if round_number is not None:
-        all_msgs = [m for m in all_msgs if m.get("round_number") == round_number]
-
-    total = len(all_msgs)
-    data = all_msgs[offset:offset + limit]
+    """查询历史消息：支持分页 + 按轮次过滤"""
+    data, total = await load_messages(
+        session_id, limit=limit, offset=offset, round_number=round_number,
+    )
 
     return {
         "data": data,
@@ -188,7 +172,7 @@ async def list_messages(session_id: str, limit: int = 20, offset: int = 0, round
             "total": total,
             "limit": limit,
             "offset": offset,
-            "has_more": offset + limit < total,  # 是否还有下一页
+            "has_more": offset + limit < total,
         },
     }
 
@@ -204,7 +188,7 @@ async def stream_events(session_id: str):
     """
     async def event_stream():
         # 先发一个心跳，确认连接建立成功
-        yield f"data: {json.dumps({'type': 'heartbeat', 'timestamp': datetime.utcnow().isoformat()})}\n\n"
+        yield f"data: {json.dumps({'type': 'heartbeat', 'timestamp': datetime.now(timezone.utc).isoformat()})}\n\n"
         # 再发一条欢迎消息作为示例
         yield f"data: {json.dumps({'type': 'message', 'role': 'assistant', 'content': '您好，请描述您的症状。'})}\n\n"
 

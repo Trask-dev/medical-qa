@@ -1,26 +1,14 @@
 from safety.l0_filter import run_l0_filter
 from safety.content_filter import check_medical_advice_compliance
-
-
-def _msg_content(msg):
-    if hasattr(msg, "content"):
-        return msg.content or ""
-    return msg.get("content", "")
-
-
-def _msg_role(msg):
-    if hasattr(msg, "type"):
-        t = msg.type
-        return "user" if t == "human" else ("assistant" if t == "ai" else t)
-    return msg.get("role", "")
+from workflow.nodes._shared import msg_role, msg_content
 
 
 async def safety_check_node(state: dict) -> dict:
     messages = state.get("messages", [])
     content = ""
     for msg in reversed(messages):
-        if _msg_role(msg) == "user":
-            content = _msg_content(msg)
+        if msg_role(msg) == "user":
+            content = msg_content(msg)
             break
 
     safety_checks_passed = True

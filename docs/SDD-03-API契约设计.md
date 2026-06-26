@@ -1913,7 +1913,7 @@ X-API-Key: mqa_live_7f3a9b2c...
 | `RATE_LIMITED` | 429 | 请求频率超限 |
 | `LLM_TIMEOUT` | 502 | LLM调用超时 |
 | `LLM_ERROR` | 502 | LLM调用异常 |
-| `MILVUS_ERROR` | 502 | 向量数据库异常 |
+| `VECTOR_STORE_ERROR` | 502 | 向量数据库异常 |
 | `INTERNAL_ERROR` | 500 | 内部错误 |
 
 ---

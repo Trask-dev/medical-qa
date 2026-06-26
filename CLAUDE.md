@@ -80,7 +80,7 @@ safety_check → route_by_intent → basic_interview(循环) → expert_intervie
 │   ├── safety/                        # 安全护栏层（被 nodes/safety_check_node 调用）
 │   │   ├── __init__.py
 │   │   ├── pii_detector.py            # 患者隐私识别与脱敏
-│   │   ├── red_flag_detector.py       # 危急重症关键词检测
+│   │   ├── l0_filter.py               # 危急重症关键词检测（L0 过滤）
 │   │   └── content_filter.py          # 输出合规性校验
 │   ├── persistence/                   # 数据持久层（精简版，聚焦合规）
 │   │   ├── __init__.py

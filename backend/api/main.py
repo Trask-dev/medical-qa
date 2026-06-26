@@ -14,19 +14,53 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config.settings import Settings
-from api.routers import sessions, messages, safety_events
+from api.routers import sessions, messages, safety_events, auth, profile
 
 settings = Settings()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from persistence.session_store import ensure_tables
+    from persistence.database import _get_engine
+    from sqlalchemy import text
+
+    await ensure_tables()
+
+    # 确保 users 表存在
+    engine = _get_engine()
+    async with engine.begin() as conn:
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS users (
+                id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                phone         VARCHAR(20) NOT NULL UNIQUE,
+                password_hash VARCHAR(128) NOT NULL,
+                nickname      VARCHAR(50) NOT NULL,
+                email         VARCHAR(100),
+                avatar        VARCHAR(500),
+                birth_date    DATE,
+                gender        VARCHAR(10),
+                height        FLOAT,
+                weight        FLOAT,
+                blood_type    VARCHAR(5),
+                medical_info  JSONB DEFAULT '{}',
+                is_active     BOOLEAN DEFAULT TRUE,
+                created_at    TIMESTAMPTZ DEFAULT NOW(),
+                updated_at    TIMESTAMPTZ DEFAULT NOW()
+            )
+        """))
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_users_phone ON users (phone)
+        """))
+
+    logger = logging.getLogger("main")
+    logger.info("Database tables verified")
     yield
 
 
 app = FastAPI(
     title="医疗智能问答系统",
-    description="基于 Master-Agent 多智能体协作架构的医疗健康咨询 API",
+    description="AI 医疗健康咨询平台 API",
     version="1.0.0",
     docs_url="/docs",
     lifespan=lifespan,
@@ -43,6 +77,8 @@ app.add_middleware(
 app.include_router(sessions.router, prefix="/api/v1", tags=["Sessions"])
 app.include_router(messages.router, prefix="/api/v1", tags=["Messages"])
 app.include_router(safety_events.router, prefix="/api/v1", tags=["Safety"])
+app.include_router(auth.router, prefix="/api/v1", tags=["Auth"])
+app.include_router(profile.router, prefix="/api/v1", tags=["Profile"])
 
 
 @app.get("/api/v1/health")
@@ -52,7 +88,7 @@ async def health_check():
         "version": "1.0.0",
         "components": {
             "database": "up",
-            "milvus": "not_configured",
+            "vector_store": "pgvector",
             "llm": "up",
         },
         "uptime_seconds": 0,

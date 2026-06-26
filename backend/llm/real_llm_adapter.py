@@ -173,7 +173,7 @@ class RealLLMAdapter:
                 logger.error("LLM API attempt %d failed: %s", attempt + 1, e)
             await asyncio.sleep(0.5 * (attempt + 1))
 
-        logger.error("LLM all %d retries exhausted, returning fallback")
+        logger.error("LLM all %d retries exhausted, returning fallback", self.MAX_RETRIES)
         fallback = _build_fallback_response(messages, force_json)
         return fallback
 

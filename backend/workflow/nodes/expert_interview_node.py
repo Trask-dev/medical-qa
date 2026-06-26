@@ -112,6 +112,22 @@ async def expert_interview_node(state: dict) -> dict:
 
     logger.info("Expert collected: %s", json.dumps(collected_info, ensure_ascii=False))
 
+    # ── 合并本轮的检索结果到 state（去重）──
+    old_results = state.get("search_results", [])
+    if search_results:
+        old_ids = {r.get("knowledge_entry_id", "") for r in old_results if isinstance(r, dict)}
+        for r in search_results:
+            if hasattr(r, "content"):
+                rid = r.knowledge_entry_id if hasattr(r, "knowledge_entry_id") else r.get("knowledge_entry_id", "")
+                if rid and rid not in old_ids:
+                    old_ids.add(rid)
+                    old_results.append({
+                        "content": r.content, "source": r.source,
+                        "knowledge_entry_id": rid,
+                        "relevance_score": r.relevance_score if hasattr(r, "relevance_score") else 0,
+                    })
+    merged_results = old_results
+
     next_action = llm_result.get("next_action", "continue")
     round_count += 1
 
@@ -123,7 +139,7 @@ async def expert_interview_node(state: dict) -> dict:
             "round_count": round_count,
             "max_rounds": max_rounds,
             "current_stage": stage,
-            "search_results": state.get("search_results", []),
+            "search_results": merged_results,
         }
 
     return {
@@ -133,5 +149,5 @@ async def expert_interview_node(state: dict) -> dict:
         "current_stage": "collect",
         "messages": [{"role": "assistant", "content": llm_result["response_text"]}],
         "options": llm_result.get("options", []),
-        "search_results": state.get("search_results", []),
+        "search_results": merged_results,
     }

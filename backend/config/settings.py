@@ -20,8 +20,7 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str = "text-embedding-v3"
     EMBEDDING_BASE_URL: str = "https://dashscope.aliyuncs.com/api/v1/services/embeddings/text-embedding/text-embedding"
 
-    MILVUS_URI: str = "./data/milvus_lite.db"
-    VECTOR_DIM: int = 1536
+    VECTOR_DIM: int = 1024
     VECTOR_STORE_BACKEND: str = "pgvector"
 
     MAX_INTERVIEW_ROUNDS: int = 5

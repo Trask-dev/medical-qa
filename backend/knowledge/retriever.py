@@ -32,7 +32,7 @@ def load_embedding_config() -> EmbeddingConfig:
         model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"),
         base_url=os.getenv("EMBEDDING_BASE_URL", "https://api.openai.com/v1"),
         api_key=os.getenv("EMBEDDING_API_KEY", os.getenv("OPENAI_API_KEY", "")),
-        dimensions=int(os.getenv("EMBEDDING_DIMENSIONS", "1536")),
+        dimensions=int(os.getenv("EMBEDDING_DIMENSIONS", "1024")),
     )
 
 
@@ -46,7 +46,8 @@ class EmbeddingEncoder:
         if self._bge_model is None:
             try:
                 from FlagEmbedding import BGEM3FlagModel
-                self._bge_model = BGEM3FlagModel('C:/Users/29098/.cache/huggingface/hub/BAAI/bge-m3', use_fp16=False)
+                bge_path = os.getenv("BGE_MODEL_PATH", "BAAI/bge-m3")
+                self._bge_model = BGEM3FlagModel(bge_path, use_fp16=False)
                 self._cached_dim = self._bge_model.model.model.config.hidden_size
                 logger.info("BGE-M3 loaded, dim=%d", self._cached_dim)
             except ImportError:

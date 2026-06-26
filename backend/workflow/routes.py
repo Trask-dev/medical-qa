@@ -107,7 +107,7 @@ def check_basic_interview_complete(state: dict) -> str:
         return "response"
 
     # 基础问诊完成：LLM 认为可以评估，或达到轮次上限
-    if current_stage == "diagnose":
+    if current_stage == "diagnose" or current_stage == "emergency":
         if _should_use_expert(state):
             logger.info("Basic interview complete → switching to expert")
             # 重置 current_stage 让专家节点开始工作

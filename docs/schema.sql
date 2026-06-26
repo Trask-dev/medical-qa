@@ -287,7 +287,7 @@ CREATE TABLE knowledge_entries (
     content             TEXT NOT NULL,
     content_hash        VARCHAR(64) NOT NULL UNIQUE,
     embedding           vector(2000),               -- pgvector向量列 (预留2000维)
-    embedding_id        VARCHAR(255),               -- Milvus中的向量ID (双写/同步)
+    embedding_id        VARCHAR(255),               -- 向量条目唯一标识
     embedding_model     VARCHAR(100),               -- text-embedding-v3 / bge-m3
     embedding_dim       INTEGER,                    -- 实际向量维度 (1536 / 1024)
     authority_score     FLOAT NOT NULL DEFAULT 0.5
@@ -301,10 +301,10 @@ CREATE TABLE knowledge_entries (
     updated_at          TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
-COMMENT ON TABLE knowledge_entries IS '医学知识库元数据表。向量存储在pgvector embedding列中，同时支持Milvus同步';
+COMMENT ON TABLE knowledge_entries IS '医学知识库元数据表，向量存储在 pgvector embedding 列中';
 COMMENT ON COLUMN knowledge_entries.content_hash IS 'SHA256(content)，用于去重检测';
-COMMENT ON COLUMN knowledge_entries.embedding IS '预留给pgvector的向量列（最大2000维）。与Milvus可并行使用或作为降级方案';
-COMMENT ON COLUMN knowledge_entries.embedding_id IS 'Milvus中的对应向量ID，用于双写/同步策略';
+COMMENT ON COLUMN knowledge_entries.embedding IS 'pgvector 向量列（最大2000维，默认1024）';
+COMMENT ON COLUMN knowledge_entries.embedding_id IS '向量条目唯一标识，用于去重和关联';
 COMMENT ON COLUMN knowledge_entries.embedding_model IS '使用的Embedding模型名称: text-embedding-v3(1536) / bge-m3(1024)';
 COMMENT ON COLUMN knowledge_entries.embedding_dim IS '实际向量维度 (1536或1024)，用于向量检索时裁剪维度';
 COMMENT ON COLUMN knowledge_entries.authority_score IS '权威性评分 0.0-1.0: guideline=0.9 > consensus=0.75 > textbook=0.6 > review=0.5 > case_report=0.2';
@@ -428,8 +428,6 @@ CREATE INDEX idx_knowledge_entries_publish_year ON knowledge_entries(publish_yea
 CREATE INDEX idx_knowledge_entries_active_score ON knowledge_entries(is_active, freshness_score DESC)
     WHERE is_active = TRUE;
 CREATE INDEX idx_knowledge_entries_content_hash ON knowledge_entries(content_hash);
-CREATE INDEX idx_knowledge_entries_embedding_id ON knowledge_entries(embedding_id)
-    WHERE embedding_id IS NOT NULL;
 CREATE INDEX idx_knowledge_entries_tags         ON knowledge_entries USING GIN (tags);
 CREATE INDEX idx_knowledge_entries_title_trgm   ON knowledge_entries
     USING GIN (title gin_trgm_ops);

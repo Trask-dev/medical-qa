@@ -798,9 +798,10 @@ components:
               type: string
               enum: [up, down]
               example: "up"
-            milvus:
+            vector_store:
               type: string
               enum: [up, down, not_configured]
+              example: "up"
               example: "up"
             llm:
               type: string
