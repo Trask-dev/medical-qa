@@ -4,18 +4,23 @@
 # 会话状态和消息已接入 PostgreSQL 持久化存储（persistence/session_store.py）。
 # =============================================================================
 
+import logging
 import uuid
 import json
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
+from sqlalchemy import text
 
 from api.schemas.message import SendMessageRequest, SendMessageResponse, MessageResponse
 from workflow.graph import build_workflow
+from persistence.database import _get_engine
 from persistence.session_store import (
     load_state, save_state, append_message, load_messages,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -93,6 +98,19 @@ async def send_message(session_id: str, req: SendMessageRequest):
     # 确保 use_expert 从持久化的 scenario_context 中恢复到 state
     if state.get("scenario_context", {}).get("use_expert"):
         state["use_expert"] = True
+
+    # ---- 注入用户个人健康信息（仅首轮）----
+    if state["round_count"] == 0:
+        user_id = prev.get("user_id", "")
+        if user_id:
+            user_profile = await _load_user_profile(user_id)
+            if user_profile:
+                patient_info = state["collected_info"].setdefault("patient_info", {})
+                for key, value in user_profile.items():
+                    if key not in patient_info or patient_info[key] is None:
+                        patient_info[key] = value
+                logger.info("Injected user profile: %d fields for user=%s",
+                            len(user_profile), user_id[:8])
 
     # ---- 第3步：执行AI工作流 ----
     result = await graph.ainvoke(state)
@@ -201,6 +219,49 @@ async def stream_events(session_id: str):
             "X-Accel-Buffering": "no",         # 关闭Nginx缓冲，防止SSE被攒批发送
         },
     )
+
+
+async def _load_user_profile(user_id: str) -> dict:
+    """从 users 表加载用户个人健康信息，转为 workflow 可用格式"""
+    if not user_id:
+        return {}
+
+    engine = _get_engine()
+    async with engine.connect() as conn:
+        result = await conn.execute(
+            text("SELECT gender, birth_date, height, weight, blood_type, medical_info FROM users WHERE id = :uid"),
+            {"uid": user_id},
+        )
+        row = result.fetchone()
+        if not row:
+            return {}
+
+    profile = {}
+    if row[0]:  # gender
+        profile["gender"] = row[0]
+    if row[1]:  # birth_date → age
+        today = date.today()
+        bd = row[1]
+        age = today.year - bd.year - ((today.month, today.day) < (bd.month, bd.day))
+        profile["age"] = age
+    if row[2]:  # height
+        profile["height"] = row[2]
+    if row[3]:  # weight
+        profile["weight"] = row[3]
+    if row[4]:  # blood_type
+        profile["blood_type"] = row[4]
+    if row[5]:  # medical_info JSON
+        medical = row[5] or {}
+        if medical.get("allergies"):
+            profile["allergies"] = medical["allergies"]
+        if medical.get("chronic_diseases"):
+            profile["chronic_diseases"] = medical["chronic_diseases"]
+        if medical.get("surgeries"):
+            profile["surgeries"] = medical["surgeries"]
+        if medical.get("family_history"):
+            profile["family_history"] = medical["family_history"]
+
+    return profile
 
 
 def _detect_scenario(user_msg: str) -> dict:
