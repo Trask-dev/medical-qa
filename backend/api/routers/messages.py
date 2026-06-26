@@ -222,7 +222,7 @@ async def stream_events(session_id: str):
 def _detect_scenario(user_msg: str) -> dict:
     return {
         "scenario_id": "general_consultation",
-        "prompt_template": "general_consultation",
+        "prompt_template": "basic_consultation",
         "display_name": "通用健康咨询",
         "max_rounds": 10,
         "use_expert": True,        # 启用专家模式：基础阶段结束后进入专家问诊

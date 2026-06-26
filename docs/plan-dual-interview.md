@@ -1,93 +1,49 @@
 # 双通道问诊架构计划
 
-> 日期: 2026-06-24 | 状态: ✅ 已完成
+> 日期: 2026-06-24 | 状态: ✅ 已完成 (实际实现与计划有调整)
 
-## 目标
+## 实际实现与计划的差异
 
-将当前单一问诊节点拆分为基础/专家双通道，专家通道注入知识库上下文。
+| 维度 | 原始计划 | 实际实现 |
+|------|---------|---------|
+| 路由方式 | 按轮次二选一 | **阶段性串行**：基础完成→自动进入专家 |
+| 专家触发 | `route_interview_type` 根据 round 判断 | `check_basic_interview_complete` 根据 `current_stage` 判断 |
+| 后台搜索 | 保留 Track B 异步 | **已删除**，专家节点改为同步 `await` |
+| 轮次上限 | `max_rounds=5` | `max_rounds=10`, `basic_max_rounds=5` (各一半) |
+| 图节点 | safety→route→basic/expert→response | safety→basic(loop)→expert(loop)→response |
 
-## 架构对比
-
-```
-Before:  safety_check → interview → response → END
-
-After:   safety_check → route → basic_interview → response → END
-                              → expert_interview → response → END
-```
-
-## 节点职责
-
-| 节点 | 触发条件 | 行为 |
-|------|---------|------|
-| `basic_interview_node` | 默认 | 基于 prompt 模板生成选择题，和现在一样 |
-| `expert_interview_node` | 路由判定为需要知识增强 | 先从知识库检索→注入 prompt →生成知识增强的选择题 |
-
-## 执行步骤
-
-### Step 1: 创建 expert_interview_node.py (20min)
+## 最终架构
 
 ```
-workflow/nodes/
-├── interview_node.py          → basic_interview_node.py (重命名)
-└── expert_interview_node.py   ← 新文件
+safety_check → basic_interview(循环) → expert_interview(循环) → response → END
+                   │                          │
+              纯 prompt 模板              RAG 知识增强
+              basic_max_rounds=5         max_rounds=10 (总)
 ```
-
-Expert node 核心差异：
-- 每轮**同步**检索知识库（不依赖后台异步任务）
-- 检索结果注入 prompt 模板：`prompts/expert_consultation.j2`
-- 其余逻辑（选项生成、事实提取、终止判断）复用 basic 节点
-
-### Step 2: 创建 expert prompt 模板 (10min)
-
-`prompts/expert_consultation.j2`：
-- 在 Block 3（采集任务）之后新增 **知识库参考** 区块
-- 变量 `{{ knowledge_context }}` 注入检索到的知识片段
-- 提醒 LLM 基于知识库内容设计选项
-
-### Step 3: 路由逻辑 (10min)
-
-`workflow/routes.py`：
-```python
-def route_interview_type(state) -> str:
-    if state.get("use_expert"):
-        return "expert_interview"
-    return "basic_interview"
-```
-
-### Step 4: 更新 graph.py (5min)
-
-```python
-workflow.add_node("basic_interview", basic_interview_node)
-workflow.add_node("expert_interview", expert_interview_node)
-workflow.add_conditional_edges("safety_check", route_interview_type, {
-    "basic_interview": "basic_interview",
-    "expert_interview": "expert_interview",
-})
-```
-
-### Step 5: 重命名 + 更新导入 (10min)
-
-- `interview_node.py` → `basic_interview_node.py`
-- 更新所有 `from workflow.nodes.interview_node import` 引用
-
-### Step 6: 测试更新 (15min)
-
-- 更新 `tests/conftest.py` MockL2Adapter 路径
-- 更新 `tests/unit_nodes/test_interview.py` 导入
 
 ## 文件变更清单
 
 | 操作 | 文件 |
 |------|------|
+| 新建 | `workflow/nodes/_shared.py` |
+| 新建 | `workflow/nodes/basic_interview_node.py` |
 | 新建 | `workflow/nodes/expert_interview_node.py` |
 | 新建 | `prompts/expert_consultation.j2` |
-| 重命名 | `interview_node.py` → `basic_interview_node.py` |
-| 修改 | `workflow/routes.py` (+route_interview_type) |
-| 修改 | `workflow/graph.py` (+expert节点) |
-| 修改 | `api/routers/messages.py` (import路径) |
+| 删除 | `workflow/nodes/interview_node.py` |
+| 修改 | `workflow/routes.py` (+check_basic/expert_complete) |
+| 修改 | `workflow/graph.py` (+双节点+阶段边) |
+| 修改 | `api/routers/messages.py` (scenario_config) |
 | 修改 | `tests/conftest.py` (mock路径) |
-| 修改 | `tests/unit_nodes/test_interview.py` (import路径) |
+| 修改 | `tests/unit_nodes/test_interview.py` (导入路径) |
+| 修改 | `tests/unit/test_routes.py` (新路由测试) |
 
-## 预计工作量
+## 配置
 
-总计 ~1.5h，7 个文件变更。
+```python
+# messages.py:_detect_scenario
+{
+    "max_rounds": 10,
+    "use_expert": True,
+    "basic_max_rounds": 5,
+}
+```

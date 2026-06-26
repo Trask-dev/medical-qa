@@ -1,7 +1,7 @@
 # 医疗智能问答系统 — 关键设计决策记录 (ADR)
 
-> **版本：** v1.0
-> **日期：** 2026-06-19
+> **版本：** v3.0
+> **日期：** 2026-06-26
 > **状态：** 持续更新
 
 ---
@@ -10,11 +10,11 @@
 
 | 编号 | 决策 | 状态 | 日期 |
 |------|------|------|------|
-| ADR-013 | v2.0 架构演进：Twin-Track 问诊 + 两阶段流水线 | ✅ 已确认 | 2026-06-20 |
+| ADR-014 | v3.0 阶段性串行双通道问诊（基础→专家→诊断） | ✅ 已确认 | 2026-06-26 |
+| ADR-013 | v2.0 架构演进：Twin-Track 问诊 + 两阶段流水线 | ✅ 已废弃 | 2026-06-20 |
 | ADR-001 | LangGraph 作为 Agent 编排框架 | ✅ 已确认 | 2026-06-19 |
 | ADR-002 | Master-Agent 集中路由模式 | ✅ 已确认 | 2026-06-19 |
 | ADR-003 | 黑板模式 Agent 间通信 | ✅ 已确认 | 2026-06-19 |
-| ADR-004 | 问诊与搜索异步并行 | ✅ 已确认 | 2026-06-19 |
 | ADR-005 | PostgreSQL + pgvector → Distributed 渐进路径 | ✅ 已确认 | 2026-06-19 |
 | ADR-006 | JSONB 存储结构化病历与诊断 | ✅ 已确认 | 2026-06-19 |
 | ADR-007 | PII 双轨存储策略 | ✅ 已确认 | 2026-06-19 |
@@ -26,29 +26,60 @@
 
 ---
 
-## ADR-013: v2.0 架构演进 — Twin-Track 问诊 + 两阶段流水线
+## ADR-014: v3.0 阶段性串行双通道问诊
 
 ### 状态
 ✅ 已确认
 
 ### 背景
-原 v1.0 架构采用独立的三 Agent 并行模型（问诊Agent / 搜索Agent / 诊断Agent），LangGraph 图中包含独立的 search、diagnosis 等节点。实践中发现：搜索作为独立节点阻塞了 interview→response 路径，且诊断逻辑与回复生成高度耦合，强行拆分为独立节点增加了状态管理复杂度。
+v2.0 的 Twin-Track 架构中，Track B（异步后台搜索）存在以下问题：
+1. 异步搜索的结果无法在当轮 prompt 中使用，只能等下一轮累积拉取
+2. 基础信息收集和知识增强追问混在同一个节点，LLM 难以在信息不足时就使用知识库
+3. 用户希望先快速收集基本信息，再进入深度的知识增强问诊
 
 ### 决策
-采用 **Twin-Track 问诊 + 两阶段流水线** 模型：
-1. **搜索内嵌为 Track B**：不再作为独立 LangGraph 节点，而是问诊Agent 内部的异步并行 Track，每轮问诊时以 `asyncio.create_task()` 触发，不阻塞主对话线程
-2. **诊断合并到 response_node**：`response_node` 统一处理回复生成（含诊断推理、应急响应、直接问答），简化 LangGraph 图结构
-3. **图节点缩减为 4 个**：`safety_check → interview → response → END/human_review`
+1. **拆分问诊节点为基础+专家双节点**：`basic_interview_node` + `expert_interview_node`
+2. **阶段性串行路由**：基础阶段完成（LLM 判断或达轮次上限）→ 自动进入专家阶段
+3. **删除异步后台搜索**：专家节点使用 `await retrieve_for_symptoms()` 同步检索，结果直接注入当轮 prompt
+4. **选择题式交互**：两个节点均生成 3-5 个选项的选择题，最后一项为"其他"
 
-### 理由
-1. 减少 LangGraph 节点数 → 降低状态传递开销
-2. Track B 异步不阻塞 Track A → 用户感知延迟 < 500ms
-3. response_node 统一出口 → 便于安全审核和免责声明强制附加
+### 路由逻辑
+```
+route_by_intent           → 医疗意图始终从 basic_interview 开始
+check_basic_complete      → 基础完成 + use_expert=True → expert_interview
+                          → 基础完成 + use_expert=False → response
+check_expert_complete     → 专家完成 → response
+```
+
+### 配置
+```python
+# _detect_scenario() 返回值
+{
+    "max_rounds": 10,          # 总轮次上限
+    "use_expert": True,        # 是否启用专家阶段
+    "basic_max_rounds": 5,     # 基础阶段轮次上限
+}
+```
 
 ### 影响
-- `workflow/nodes/search_node.py` 保留为工具模块，不再接入主图
-- `workflow/graph.py` 简化为 safety_check→interview→response→END
-- 架构文档更新至 v2.0
+- `interview_node.py` → `basic_interview_node.py` + `expert_interview_node.py`
+- `_shared.py` 提取公共工具函数（msg_role/msg_content/format_knowledge_context）
+- 删除 `_async_search`、`_search_cache`、`pull_results`
+- graph.py 节点：`safety_check → basic_interview → expert_interview → response → END`
+- routes.py 新增 `check_basic_interview_complete` / `check_expert_interview_complete`
+
+---
+
+## ADR-013: v2.0 架构演进 — Twin-Track 问诊 + 两阶段流水线
+
+### 状态
+⚠️ 已废弃（被 ADR-014 替代）
+
+### 背景
+原 v1.0 架构采用独立的三 Agent 并行模型。ADR-013 将搜索内嵌为 Track B 异步任务，图节点缩减为 4 个。
+
+### 废弃原因
+Track B 的异步搜索结果无法在当轮使用，且基础信息收集与知识增强追问未分离。ADR-014 改为阶段性串行+同步 RAG。
 
 ---
 

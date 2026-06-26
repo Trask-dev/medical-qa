@@ -41,7 +41,8 @@ async def response_node(state: dict) -> dict:
     elif current_stage == "collect":
         output = _extract_last_assistant_message(messages) or "请继续描述您的症状。"
         next_stage = "collect"
-        logger.info("response_node collect: msgcount=%d output_len=%d preview=%s",
+        logger.info("response_node collect: msg",
+                    "count=%d output_len=%d preview=%s",
                      len(messages), len(output), output[:80])
     elif current_stage == "diagnose":
         from workflow.diagnosis_agent import DiagnosisAgent

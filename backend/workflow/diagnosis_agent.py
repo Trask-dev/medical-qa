@@ -10,6 +10,7 @@ import os
 
 from config.settings import Settings
 from llm.real_llm_adapter import RealLLMAdapter, LLMAPIError, LLMRateLimitError, LLMTimeoutError
+from llm.real_llm_adapter import _load_prompt_template, _split_system_user
 
 logger = logging.getLogger(__name__)
 settings = Settings()
@@ -68,19 +69,20 @@ class DiagnosisAgent:
             print(f"【知识库参考】\n{knowledge}")
             print("=" * 80 + "\n")
             
-            # 5. 调用LLM生成综合分析
+            # 5. 加载模板并渲染 prompt
+            template = _load_prompt_template("diagnosis")
+            prompt_str = template.render(
+                patient_info_text=patient_info_text or "暂无结构化患者信息",
+                conversation=conversation or "暂无对话历史",
+                knowledge=knowledge or "暂无相关知识库参考",
+            )
+            system_prompt, user_content = _split_system_user(prompt_str)
+
+            # 6. 调用LLM生成综合分析
             result = await self.adapter.generate(
                 messages=[
-                    {"role": "system", "content": (
-                        "你是一名AI健康助手。请基于以下信息生成综合分析。"
-                        "必须使用不确定表达(可能、建议、倾向于考虑)。禁止确诊,禁止给出用药剂量。"
-                    )},
-                    {"role": "user", "content": (
-                        f"【患者信息】\n{patient_info_text}\n\n" if patient_info_text else ""
-                        f"【问诊对话】\n{conversation}\n\n"
-                        f"【知识库参考】\n{knowledge}\n\n"
-                        "请基于以上信息给出综合分析。"
-                    )},
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_content},
                 ],
                 max_tokens=1024, temperature=0.3,
             )

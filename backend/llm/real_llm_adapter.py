@@ -432,7 +432,7 @@ class RealL2Adapter:
     ) -> dict:
         import asyncio
 
-        template_name = scenario_context.get("prompt_template", "general_consultation")
+        template_name = scenario_context.get("prompt_template", "basic_consultation")
         template = _load_prompt_template(template_name)
 
         prompt_str = template.render(

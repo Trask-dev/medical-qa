@@ -3,6 +3,25 @@
 ## Core Philosophy
 你正在为「医疗智能问答系统」执行 Vibe Coding。必须严格遵守 SDD → DDD → TDD 工作流，**禁止跳过任何阶段**。所有代码生成必须以《系统架构设计文档.md》为唯一真理源。
 
+## 🏗️ 当前架构（v3.0 — 阶段性串行双通道问诊）
+
+```
+safety_check → route_by_intent → basic_interview(循环) → expert_interview(循环) → response → END
+
+阶段1: basic_interview  — 纯 prompt 模板，选择题式交互，收集基本信息
+  终止条件: LLM 判断 next_action="assess" 或 round_count >= basic_max_rounds(默认5)
+
+阶段2: expert_interview — 同步 RAG 检索 pgvector 知识库，注入 expert_consultation.j2
+  终止条件: LLM 判断 next_action="assess" 或 round_count >= max_rounds(默认10)
+
+阶段3: response — 调用 DiagnosisAgent 综合对话历史+患者信息+知识库→诊断报告+免责声明
+```
+
+**关键配置** (`messages.py:_detect_scenario`):
+- `max_rounds`: 10 (总轮次上限)
+- `use_expert`: True (启用专家阶段)
+- `basic_max_rounds`: 5 (基础阶段轮次上限)
+
 ## ⚠️ 安全红线（最高优先级，不可覆盖）
 1.  **紧急中断优先**：检测到红旗关键词（胸痛/呼吸困难/自杀等）时，立即中断所有 Agent 链，返回急救指引，禁止继续问诊或诊断。
 2.  **禁止确诊/开方**：输出中严禁出现“确诊”“一定”“保证”等表述，强制使用“可能”“建议”“倾向于考虑”。
@@ -41,15 +60,17 @@
 │   │       └── safety.py
 │   ├── workflow/                      # 🌟 核心工作流层（Agent 逻辑归于此）
 │   │   ├── __init__.py
-│   │   ├── state.py                   # MedicalQAState TypedDict + Reducer
-│   │   ├── graph.py                   # StateGraph 构建 + compile + 入口函数
-│   │   ├── routes.py                  # 条件边路由决策（如：是否触发紧急响应）
+│   │   ├── state.py                   # MedicalQAState TypedDict + Reducer (dict_merge)
+│   │   ├── graph.py                   # StateGraph 构建：safety→basic→expert→response
+│   │   ├── routes.py                  # 条件边路由：route_by_intent / check_basic_complete / check_expert_complete
+│   │   ├── diagnosis_agent.py         # 诊断报告生成 Agent
 │   │   └── nodes/                     # 每个文件 = StateGraph 一个节点
 │   │       ├── __init__.py
-│   │       ├── interview_node.py      # 问诊信息采集
-│   │       ├── search_node.py         # 知识库检索
+│   │       ├── _shared.py             # 共享工具：msg_role/msg_content/format_knowledge_context
+│   │       ├── basic_interview_node.py  # 阶段1：基础问诊（纯 prompt 模板，选择题式交互）
+│   │       ├── expert_interview_node.py # 阶段2：专家问诊（同步 RAG 检索 → 知识注入 prompt）
 │   │       ├── safety_check_node.py   # PII脱敏 + 红旗词检测 + 内容审核
-│   │       ├── response_node.py       # 生成最终回复（含 hidden_cot 过滤）
+│   │       ├── response_node.py       # 阶段3：生成最终回复/诊断报告（含免责声明）
 │   │       └── human_review_node.py   # 人工中断点（断点续传）
 │   ├── knowledge/                     # 知识检索层
 │   │   ├── __init__.py
@@ -70,8 +91,13 @@
 │   │       └── medical_record.py      # 最终问诊报告归档
 │   ├── llm/                           # LLM 适配层
 │   │   ├── __init__.py
-│   │   ├── adapter.py                 # 统一多模型接口
+│   │   ├── adapter.py                 # 统一多模型接口（抽象）
+│   │   ├── real_llm_adapter.py        # DeepSeek 实现：RealLLMAdapter/RealL2Adapter/RealRouterLLM
 │   │   └── streaming.py               # 流式输出标准化处理
+│   ├── prompts/                       # Jinja2 提示词模板
+│   │   ├── basic_consultation.j2     # 基础问诊模板（选择题式）
+│   │   ├── expert_consultation.j2     # 专家问诊模板（含 {{ knowledge_context }} 区块）
+│   │   └── diagnosis.j2               # 诊断报告模板
 │   ├── config/                        # 配置管理
 │   │   ├── __init__.py
 │   │   ├── settings.py                # Pydantic Settings（环境变量绑定）
