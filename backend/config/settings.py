@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     ENCRYPTION_KEY: Optional[str] = None
     DISCLAIMER_TEXT: str = "本内容仅供参考，不能替代专业医疗诊断。如有不适，请及时就医。"
 
-    CORS_ORIGINS: list[str] = ["*"]
+    CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:8000"]
     LOG_LEVEL: str = "INFO"
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}

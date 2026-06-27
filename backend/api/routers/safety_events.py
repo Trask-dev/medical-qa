@@ -1,10 +1,12 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
+from api.dependencies import get_current_user
 
 router = APIRouter()
 
 
 @router.get("/sessions/{session_id}/safety")
-async def list_safety_events(session_id: str, category: str = None, limit: int = 20, offset: int = 0):
+async def list_safety_events(session_id: str, category: str = None, limit: int = 20, offset: int = 0, user: dict = Depends(get_current_user)):
     data = []
     return {
         "data": data,
