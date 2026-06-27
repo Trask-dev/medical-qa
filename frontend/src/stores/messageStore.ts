@@ -85,7 +85,7 @@ export const useMessageStore = defineStore('message', () => {
       }
     } catch (e: unknown) {
       if (e instanceof Error && e.name === 'AbortError') {
-        console.log('Request aborted for session:', sessionIdForThisRequest)
+        // AbortError is normal flow when switching sessions — no need to log in production
         return
       }
       console.error('sendMessage:', e)
