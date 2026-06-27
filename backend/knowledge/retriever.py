@@ -74,7 +74,11 @@ class EmbeddingEncoder:
             except Exception as e:
                 logger.warning("BGE-M3 failed: %s", e)
 
-        return [[0.0] * self._cached_dim for _ in texts]
+        raise RuntimeError(
+            "EMBEDDING_API_KEY or BGE_MODEL_PATH must be configured. "
+            "Set EMBEDDING_API_KEY in .env for API-based embeddings, "
+            "or BGE_MODEL_PATH for local BGE-M3."
+        )
 
     @property
     def dimensions(self) -> int:

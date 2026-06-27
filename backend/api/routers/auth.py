@@ -1,4 +1,5 @@
 """认证路由：注册 + 登录"""
+import time
 import uuid
 from datetime import datetime, timezone, timedelta
 
@@ -16,7 +17,7 @@ router = APIRouter()
 import os
 SECRET_KEY = os.getenv("JWT_SECRET", "change-me-to-a-random-secret-in-env")
 ALGORITHM = "HS256"
-TOKEN_EXPIRE_HOURS = 72
+TOKEN_EXPIRE_HOURS = 24
 
 
 def _hash_password(password: str) -> str:
@@ -60,9 +61,25 @@ async def register(req: RegisterRequest):
     return TokenResponse(access_token=token, user_id=user_id, nickname=req.nickname)
 
 
+_login_attempts: dict[str, list[float]] = {}
+
+def _check_rate_limit(phone: str, max_attempts: int = 5, window: int = 300) -> bool:
+    """Returns True if within rate limit, False if exceeded."""
+    now = time.time()
+    attempts = [t for t in _login_attempts.get(phone, []) if now - t < window]
+    _login_attempts[phone] = attempts
+    return len(attempts) < max_attempts
+
+def _record_attempt(phone: str):
+    _login_attempts.setdefault(phone, []).append(time.time())
+
+
 @router.post("/auth/login")
 async def login(req: LoginRequest):
     """用户登录"""
+    if not _check_rate_limit(req.phone):
+        raise HTTPException(status_code=429, detail="登录尝试过于频繁，请5分钟后再试")
+
     engine = _get_engine()
 
     async with engine.connect() as conn:
@@ -75,6 +92,9 @@ async def login(req: LoginRequest):
             raise HTTPException(status_code=401, detail="手机号或密码错误")
         if not _verify_password(req.password, row[2]):
             raise HTTPException(status_code=401, detail="手机号或密码错误")
+
+    _record_attempt(req.phone)
+    _login_attempts.pop(req.phone, None)  # Clear rate limit on success
 
     token = _create_token(str(row[0]), row[1])
     return TokenResponse(access_token=token, user_id=str(row[0]), nickname=row[3])

@@ -52,10 +52,18 @@ async def create_session(user: dict = Depends(get_current_user)):
 
 
 @router.get("/sessions")
-async def list_sessions(status: str = None, user_id: str = None, limit: int = 20, offset: int = 0, user: dict = Depends(get_current_user)):
+async def list_sessions(
+    status: str = None,
+    limit: int = 20,
+    offset: int = 0,
+    user: dict = Depends(get_current_user),
+):
     """查询会话列表：从 PostgreSQL 分页查询"""
     data, total = await list_sessions_from_db(
-        status=status, user_id=user_id, limit=limit, offset=offset,
+        status=status,
+        user_id=user["user_id"],
+        limit=limit,
+        offset=offset,
     )
 
     return {
