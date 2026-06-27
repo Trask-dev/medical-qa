@@ -28,6 +28,15 @@ async def safety_check_node(state: dict) -> dict:
             next_stage = "emergency"
             output = l0_result.response or "您描述的症状需要立即就医。请立即拨打120急救电话，保持冷静，不要自行驾车。"
         else:
+            # Write masked PII back to the last user message so downstream
+            # nodes (basic_interview, expert_interview, diagnosis) never see raw PII.
+            masked_content = getattr(l0_result, 'response', '')
+            if masked_content:
+                for msg in reversed(messages):
+                    if isinstance(msg, dict) and msg.get("role") == "user":
+                        msg["content"] = masked_content
+                        break
+
             compliance_result = check_medical_advice_compliance(content)
             if compliance_result.get("blocked"):
                 blocked = True
