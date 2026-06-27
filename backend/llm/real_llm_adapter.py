@@ -456,8 +456,24 @@ class RealL2Adapter:
             )
 
         result = _sync_run(_run(), timeout=60)
-        
-        return L2ResponseSchema.model_validate(result).model_dump()
+
+        try:
+            validated = L2ResponseSchema.model_validate(result)
+            return validated.model_dump()
+        except ValidationError:
+            logger.warning("LLM output failed schema validation, returning fallback")
+            return {
+                "response_text": "抱歉，我需要更多信息来帮助分析您的情况。请尝试用不同的方式描述您的症状。",
+                "options": [
+                    {"index": 1, "label": "重新描述症状", "value": "重新描述"},
+                    {"index": 2, "label": "换个方式说", "value": "换种说法"},
+                ],
+                "extracted_facts": {},
+                "severity_assessment": "mild",
+                "is_emergency": False,
+                "next_action": "continue",
+                "disclaimer": "",
+            }
 
 
 def _split_system_user(prompt_str: str) -> tuple[str, str]:
