@@ -299,7 +299,7 @@ async function sendChoice(value, label) {
 async function sendMessage() {
   const text = inputEl.value.trim();
   if (!text) return;
-  inputEl.value = ''; sendBtn.disabled = true;
+  sendBtn.disabled = true;
 
   // PII 脱敏前置（安全红线 #4）
   const sanitized = maskPII(text);
@@ -312,10 +312,17 @@ async function sendMessage() {
     chatEl.innerHTML = '';
     try {
       const res = await api.createSession();
+      if (!res || !res.id) {
+        sendBtn.disabled = false;
+        return;
+      }
       currentSessionId = res.id;
       await loadSessions();
     } catch (e) { console.error('auto create session:', e); sendBtn.disabled = false; return; }
   }
+
+  // 仅当会话已存在时才清空输入框（避免创建失败导致输入丢失）
+  inputEl.value = '';
 
   // 防御：确保会话 ID 有效
   if (!currentSessionId || currentSessionId === 'undefined' || currentSessionId === 'null') {
