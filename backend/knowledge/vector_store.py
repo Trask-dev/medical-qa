@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Optional
@@ -106,6 +107,8 @@ class PGVectorStore(VectorStore):
     def __init__(self, config: VectorStoreConfig | None = None) -> None:
         self.config = config or load_vector_config()
         self._table = "knowledge_vectors"
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', self._table):
+            raise ValueError(f"Invalid table name: {self._table}")
         self._engine = None
 
     async def _get_engine(self):
@@ -140,13 +143,14 @@ class PGVectorStore(VectorStore):
         async with engine.begin() as conn:
             for vec, meta in zip(vectors, metadata):
                 vid = meta.get("knowledge_entry_id", f"ke_{len(ids)}")
-                emb_str = f"'[{','.join(str(x) for x in vec)}]'"
+                emb_str = f"[{','.join(str(x) for x in vec)}]"
                 await conn.execute(text(
                     f"INSERT INTO {self._table} (id, embedding, content, source, source_type, "
                     f"title, authority_score, freshness_score, publish_year) "
-                    f"VALUES (:id, {emb_str}::vector, :content, :source, :stype, :title, :auth, :fresh, :year) "
+                    f"VALUES (:id, :emb::vector, :content, :source, :stype, :title, :auth, :fresh, :year) "
                     f"ON CONFLICT (id) DO UPDATE SET embedding=EXCLUDED.embedding, content=EXCLUDED.content"
-                ), {"id": vid, "content": meta.get("content", ""),
+                ), {"id": vid, "emb": emb_str,
+                    "content": meta.get("content", ""),
                     "source": meta.get("source", ""), "stype": meta.get("source_type", ""),
                     "title": meta.get("title", ""), "auth": meta.get("authority_score", 0.5),
                     "fresh": meta.get("freshness_score", 1.0), "year": meta.get("publish_year", 2024)})
@@ -156,14 +160,14 @@ class PGVectorStore(VectorStore):
     async def search(self, query_vector: list[float], top_k: int = 10,
                      filters: dict | None = None) -> list[dict]:
         from sqlalchemy import text
-        vec_str = f"'[{','.join(str(x) for x in query_vector)}]'"
+        vec_str = f"[{','.join(str(x) for x in query_vector)}]"
         engine = await self._get_engine()
         async with engine.connect() as conn:
             rows = await conn.execute(text(
-                f"SELECT id, 1 - (embedding <=> {vec_str}::vector) AS score, content, source, "
+                f"SELECT id, 1 - (embedding <=> :vec::vector) AS score, content, source, "
                 f"source_type, title, authority_score, freshness_score, publish_year "
-                f"FROM {self._table} ORDER BY embedding <=> {vec_str}::vector LIMIT :k"
-            ), {"k": top_k})
+                f"FROM {self._table} ORDER BY embedding <=> :vec::vector LIMIT :k"
+            ), {"vec": vec_str, "k": top_k})
             results = rows.fetchall()
         return [{"id": r[0], "score": r[1],
                  "metadata": {"content": r[2], "source": r[3], "source_type": r[4],

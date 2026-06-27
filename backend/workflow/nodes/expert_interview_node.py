@@ -56,43 +56,29 @@ async def expert_interview_node(state: dict) -> dict:
         knowledge_context = format_knowledge_context(search_results)
         scenario_context["knowledge_context"] = knowledge_context
 
-        # 🔍 专家节点激活标识 — 控制台可见
-        print("\n" + "=" * 70)
-        print(f"🧠 [专家问诊节点] 第 {round_count} 轮 — 知识库检索结果")
-        print("=" * 70)
         count = len(search_results) if search_results else 0
-        print(f"检索到 {count} 条相关知识:")
-        print("-" * 70)
+        logger.debug("检索到 %d 条结果", count)
         if search_results:
             for i, r in enumerate(search_results, 1):
-                content = r.content if hasattr(r, "content") else r.get("content", "")
-                source = r.source if hasattr(r, "source") else r.get("source", "")
-                score = r.relevance_score if hasattr(r, "relevance_score") else r.get("relevance_score", 0)
-                print(f"  [{i}] (相关度: {score:.2f}) {content[:120]}")
-                if source:
-                    print(f"      来源: {source}")
+                title = r.get('title', '') if isinstance(r, dict) else getattr(r, 'title', '')
+                content_excerpt = (r.get('content_excerpt', '') if isinstance(r, dict) else getattr(r, 'content', ''))
+                logger.debug("  %s: %.80s", title or f"item_{i}", content_excerpt or "")
         else:
-            print("  ⚠️ 未检索到相关知识条目")
-        print("=" * 70 + "\n")
+            logger.debug("  未检索到相关知识条目")
 
         logger.info(
             "Expert: retrieved %d knowledge entries for round %d",
             count, round_count,
         )
     except Exception as e:
-        print(f"\n{'='*70}")
-        print(f"⚠️ [专家问诊节点] 知识库检索失败")
-        print(f"   异常类型: {type(e).__name__}")
-        print(f"   异常信息: {str(e) or '(无)'}")
-        print(f"   详细追踪:")
-        traceback.print_exc()
-        print(f"{'='*70}\n")
+        logger.debug("专家问诊节点知识库检索失败: %s - %s", type(e).__name__, str(e) or '(无)')
+        logger.debug("详细追踪: %s", traceback.format_exc())
         logger.warning("Expert knowledge retrieval failed, proceeding without: %s", e)
         scenario_context["knowledge_context"] = "（知识库检索暂不可用，请基于通用医学知识进行问诊）"
 
     # 调用 LLM 生成知识增强问题
     try:
-        llm_result = _adapter.generate_question(
+        llm_result = await _adapter.generate_question(
             collected_facts=collected_info,
             scenario_context=scenario_context,
             messages=formatted_messages,

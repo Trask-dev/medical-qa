@@ -62,7 +62,7 @@ def _should_use_expert(state: dict) -> bool:
 # ═══════════════════════════════════════════════════════════════
 
 
-def route_by_intent(state: dict) -> str:
+async def route_by_intent(state: dict) -> str:
     """安检后路由：非医疗意图→直接回复，医疗意图→从基础问诊开始"""
     if state.get("red_flag_raised"):
         return "response"
@@ -72,7 +72,7 @@ def route_by_intent(state: dict) -> str:
     try:
         last_msg = _extract_last_user_message(state)
         if last_msg:
-            routes = _get_router().classify(last_msg)
+            routes = await _get_router().classify(last_msg)
             if routes and routes[0][0] in ("general_consultation",):
                 scenario_id = routes[0][0]
                 logger.info("LLM routed: scenario=%s confidence=%.2f", scenario_id, routes[0][1])

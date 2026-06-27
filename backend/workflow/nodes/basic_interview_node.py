@@ -41,7 +41,7 @@ async def basic_interview_node(state: dict) -> dict:
 
     # 调用 LLM 生成问题（告知基础阶段轮次上限）
     try:
-        llm_result = _adapter.generate_question(
+        llm_result = await _adapter.generate_question(
             collected_facts=collected_info,
             scenario_context=state.get("scenario_context", {}),
             messages=formatted_messages,

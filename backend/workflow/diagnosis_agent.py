@@ -59,15 +59,11 @@ class DiagnosisAgent:
                 patient_info = collected_info.get("patient_info", collected_info)
                 patient_info_text = "\n".join([f"- {k}: {v}" for k, v in patient_info.items() if v])
 
-            # 4. 打印诊断输入信息（调试用）
-            print("\n" + "=" * 80)
-            print("诊断输入信息:")
-            print("=" * 80)
+            # 4. 记录诊断输入信息（调试用）
             if patient_info_text:
-                print(f"【患者信息】\n{patient_info_text}\n")
-            print(f"【问诊对话】\n{conversation}\n")
-            print(f"【知识库参考】\n{knowledge}")
-            print("=" * 80 + "\n")
+                logger.debug("【患者信息】%s", patient_info_text)
+            logger.debug("【问诊对话】%s", conversation)
+            logger.debug("【知识库参考】%s", knowledge)
             
             # 5. 加载模板并渲染 prompt
             template = _load_prompt_template("diagnosis")

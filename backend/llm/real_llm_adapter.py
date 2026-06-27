@@ -342,28 +342,6 @@ class L1RouteListSchema(BaseModel):
     routes: list[L1RouteSchema]
 
 
-def _sync_run(coro, timeout: float = 15):
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-    import concurrent.futures
-    import threading
-    future = concurrent.futures.Future()
-
-    def _run_in_thread():
-        new_loop = asyncio.new_event_loop()
-        try:
-            result = new_loop.run_until_complete(coro)
-            future.set_result(result)
-        except Exception as e:
-            future.set_exception(e)
-        finally:
-            new_loop.close()
-
-    threading.Thread(target=_run_in_thread, daemon=True).start()
-    return future.result(timeout=timeout)
-
 
 # ──────────────────────────────────────────────
 # 5. L1 路由分诊台
@@ -388,7 +366,7 @@ class RealRouterLLM:
     def __init__(self) -> None:
         self.adapter = RealLLMAdapter()
 
-    def classify(self, user_message: str) -> list[tuple[str, float, str]]:
+    async def classify(self, user_message: str) -> list[tuple[str, float, str]]:
 
         async def _run():
             return await self.adapter.generate(
@@ -401,7 +379,7 @@ class RealRouterLLM:
                 force_json=True,
             )
 
-        result = _sync_run(_run(), timeout=15)
+        result = await asyncio.wait_for(_run(), timeout=15)
 
         if result.get("_fallback"):
             return [("general_consultation", 0.0, "LLM调用失败，降级兜底")]
@@ -422,7 +400,7 @@ class RealL2Adapter:
         self.adapter = RealLLMAdapter()
         self.scenario_config = scenario_config or {}
 
-    def generate_question(
+    async def generate_question(
         self,
         collected_facts: dict,
         scenario_context: dict,
@@ -430,7 +408,6 @@ class RealL2Adapter:
         round_count: int,
         max_rounds: int,
     ) -> dict:
-        import asyncio
 
         template_name = scenario_context.get("prompt_template", "basic_consultation")
         template = _load_prompt_template(template_name)
@@ -455,7 +432,7 @@ class RealL2Adapter:
                 force_json=True,
             )
 
-        result = _sync_run(_run(), timeout=60)
+        result = await asyncio.wait_for(_run(), timeout=60)
 
         try:
             validated = L2ResponseSchema.model_validate(result)
