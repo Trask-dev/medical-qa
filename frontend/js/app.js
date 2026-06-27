@@ -5,6 +5,8 @@
 // ── State ─────────────────────────────
 let currentSessionId = null;
 let sessions = [];
+let activeAbortController = null;   // 正在进行的请求的 AbortController
+let activeRequestSessionId = null;  // 正在进行的请求所属的会话 ID
 
 // ── Init ──────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -111,17 +113,30 @@ function renderSessions() {
 }
 
 async function selectSession(sid) {
+  // 取消上一个会话正在进行中的请求，防止其响应污染当前会话
+  cancelActiveRequest();
+
   currentSessionId = sid;
   renderSessions();
   clearChat();
   try {
     const res = await api.listMessages(sid);
     renderMessages(res.data || []);
-  } catch (e) { console.error('loadMessages:', e); }
+    // 若会话已完成诊断，禁用输入框
+    disableInputIfDiagnosisDone();
+  } catch (e) {
+    console.error('loadMessages:', e);
+    // 加载失败时显示错误提示，而非空白页
+    chatEl.innerHTML = `<div class="welcome">
+      <h2>加载失败</h2>
+      <p style="color:var(--mauve)">无法加载历史消息，请检查网络后重试</p>
+    </div>`;
+  }
   updateStageUI();
 }
 
 document.getElementById('btnNewSession').addEventListener('click', () => {
+  cancelActiveRequest();
   currentSessionId = null;
   clearChat();
   showWelcome();
@@ -148,6 +163,26 @@ const roundEl = document.getElementById('roundInfo');
 
 function clearChat() { chatEl.innerHTML = ''; inputEl.disabled = false; sendBtn.disabled = false; inputEl.placeholder = '描述您的症状...'; }
 function scrollChat() { chatEl.scrollTop = chatEl.scrollHeight; }
+
+// 取消当前活跃的请求（会话切换或新请求发起时调用）
+function cancelActiveRequest() {
+  if (activeAbortController) {
+    activeAbortController.abort();
+    activeAbortController = null;
+    activeRequestSessionId = null;
+  }
+}
+
+// 检查当前会话是否已出具诊断报告，若已出具则禁用输入
+// 直接检测 DOM 中的 .report-card 元素，不依赖侧边栏数据或轮次计数
+function disableInputIfDiagnosisDone() {
+  const hasReport = chatEl.querySelector('.msg.assistant .report-card');
+  if (hasReport) {
+    inputEl.disabled = true;
+    inputEl.placeholder = '诊断已完成，可新建会话继续';
+    sendBtn.disabled = true;
+  }
+}
 
 function updateStageUI() {
   stageEl.style.display = 'none'; expertEl.style.display = 'none';
@@ -223,19 +258,46 @@ function hideThinking() {
 
 async function sendChoice(value, label) {
   if (!currentSessionId) return;
+
+  // 取消上一个未完成的请求
+  cancelActiveRequest();
+
+  const sessionIdForThisRequest = currentSessionId;
   appendMessage('user', label);
   showThinking();
+
+  const controller = new AbortController();
+  activeAbortController = controller;
+  activeRequestSessionId = sessionIdForThisRequest;
+
   try {
-    const res = await api.sendMessage(currentSessionId, label);
+    const res = await api.sendMessage(sessionIdForThisRequest, label, 'text', controller.signal);
     hideThinking();
-    handleResponse(res);
-  } catch (e) { hideThinking(); console.error('sendChoice:', e); }
+    if (currentSessionId === sessionIdForThisRequest) {
+      handleResponse(res);
+    }
+  } catch (e) {
+    hideThinking();
+    if (e.name === 'AbortError') {
+      console.log('Choice request aborted for session:', sessionIdForThisRequest);
+      return;
+    }
+    console.error('sendChoice:', e);
+  } finally {
+    if (activeRequestSessionId === sessionIdForThisRequest) {
+      activeAbortController = null;
+      activeRequestSessionId = null;
+    }
+  }
 }
 
 async function sendMessage() {
   const text = inputEl.value.trim();
   if (!text) return;
   inputEl.value = ''; sendBtn.disabled = true;
+
+  // 取消上一个未完成的请求
+  cancelActiveRequest();
 
   // 首次发消息：自动创建会话 + 清掉欢迎页
   if (!currentSessionId) {
@@ -247,14 +309,43 @@ async function sendMessage() {
     } catch (e) { console.error('auto create session:', e); sendBtn.disabled = false; return; }
   }
 
+  // 快照：记录本次请求所属的会话 ID（防止响应时 session 已切换）
+  const sessionIdForThisRequest = currentSessionId;
   appendMessage('user', text);
   showThinking();
+
+  // 创建 AbortController 以便切换会话时取消请求
+  const controller = new AbortController();
+  activeAbortController = controller;
+  activeRequestSessionId = sessionIdForThisRequest;
+
   try {
-    const res = await api.sendMessage(currentSessionId, text);
+    const res = await api.sendMessage(sessionIdForThisRequest, text, 'text', controller.signal);
     hideThinking();
-    handleResponse(res);
-  } catch (e) { hideThinking(); console.error('sendMessage:', e); }
-  sendBtn.disabled = false; inputEl.focus();
+
+    // 关键校验：仅当用户仍停留在该会话时才处理响应
+    if (currentSessionId === sessionIdForThisRequest) {
+      handleResponse(res);
+    }
+  } catch (e) {
+    hideThinking();
+    if (e.name === 'AbortError') {
+      console.log('Request aborted for session:', sessionIdForThisRequest);
+      return; // 主动取消，不显示错误
+    }
+    console.error('sendMessage:', e);
+  } finally {
+    // 仅当这个请求仍是"活跃请求"时才清除标记
+    if (activeRequestSessionId === sessionIdForThisRequest) {
+      activeAbortController = null;
+      activeRequestSessionId = null;
+    }
+    sendBtn.disabled = false;
+    // 仅当用户仍在该会话时才聚焦输入框
+    if (currentSessionId === sessionIdForThisRequest) {
+      inputEl.focus();
+    }
+  }
 }
 
 function handleResponse(res) {
@@ -276,12 +367,12 @@ function handleResponse(res) {
   }
   if (res.round_count) roundEl.textContent = `第 ${res.round_count} / 10 轮`;
 
-  // If diagnosis result in collected fields
+  // 若已出具诊断报告，禁用输入并刷新侧边栏以更新会话状态
   if (res.next_action === 'diagnosis_ready' || res.current_stage === 'diagnose') {
     inputEl.disabled = true; inputEl.placeholder = '诊断已完成，可新建会话继续';
     sendBtn.disabled = true;
   }
-  loadSessions(); // refresh sidebar
+  loadSessions(); // refresh sidebar (updates sessions[] for disableInputIfDiagnosisDone)
 }
 
 sendBtn.addEventListener('click', sendMessage);

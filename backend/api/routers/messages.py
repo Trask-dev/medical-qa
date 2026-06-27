@@ -84,6 +84,7 @@ async def send_message(session_id: str, req: SendMessageRequest):
         "route_decision": prev.get("route_decision", ""),
         "current_scenario": prev.get("current_scenario", "general_consultation"),
         "scenario_context": prev.get("scenario_context", {}),
+        "options": prev.get("options", []),
     }
 
     if not state.get("scenario_context"):
@@ -130,6 +131,7 @@ async def send_message(session_id: str, req: SendMessageRequest):
         "route_decision": result.get("route_decision", ""),
         "current_scenario": result.get("current_scenario", "general_consultation"),
         "scenario_context": result.get("scenario_context", prev.get("scenario_context", {})),
+        "options": result.get("options", []),
     })
 
     # ---- 第4步：根据引擎输出决定前端下一步动作 ----
@@ -148,6 +150,9 @@ async def send_message(session_id: str, req: SendMessageRequest):
 
     assistant_reply = _extract_assistant_reply(result.get("messages", []))
 
+    # 提取选项（需在持久化 AI 消息之前，以便一并存储）
+    options = result.get("options", []) if stage == "collect" else []
+
     if assistant_reply:
         ai_msg = {
             "id": str(uuid.uuid4()),
@@ -158,11 +163,10 @@ async def send_message(session_id: str, req: SendMessageRequest):
             "content_type": "text",
             "agent_source": "system",
             "token_count": None,
+            "options": options,
             "created_at": datetime.now(timezone.utc),
         }
         await append_message(session_id, ai_msg)
-
-    options = result.get("options", []) if stage == "collect" else []
 
     return SendMessageResponse(
         message=MessageResponse(**user_msg),

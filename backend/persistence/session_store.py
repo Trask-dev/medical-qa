@@ -50,6 +50,10 @@ async def ensure_tables() -> None:
             CREATE INDEX IF NOT EXISTS idx_messages_session
             ON messages (session_id, created_at)
         """))
+        # v2 迁移：为历史消息添加 options 列（存储 AI 选择题选项）
+        await conn.execute(text("""
+            ALTER TABLE messages ADD COLUMN IF NOT EXISTS options JSONB DEFAULT '[]'
+        """))
     logger.info("Session persistence tables ready")
 
 
@@ -100,9 +104,9 @@ async def append_message(session_id: str, msg: dict) -> None:
         await conn.execute(
             text("""
                 INSERT INTO messages (id, session_id, role, content, content_type,
-                                      round_number, agent_source, token_count, created_at)
+                                      round_number, agent_source, token_count, options, created_at)
                 VALUES (:id, :sid, :role, :content, :content_type,
-                        :round_number, :agent_source, :token_count, :created_at)
+                        :round_number, :agent_source, :token_count, :options, :created_at)
             """),
             {
                 "id": msg.get("id"),
@@ -113,6 +117,7 @@ async def append_message(session_id: str, msg: dict) -> None:
                 "round_number": msg.get("round_number", 0),
                 "agent_source": msg.get("agent_source"),
                 "token_count": msg.get("token_count"),
+                "options": json.dumps(msg.get("options") or [], ensure_ascii=False),
                 "created_at": msg.get("created_at", datetime.now(timezone.utc)),
             },
         )
@@ -143,7 +148,7 @@ async def load_messages(session_id: str,
             result = await conn.execute(
                 text("""
                     SELECT id, session_id, role, content, content_type,
-                           round_number, agent_source, token_count, created_at
+                           round_number, agent_source, token_count, options, created_at
                     FROM messages
                     WHERE session_id = :sid AND round_number = :rn
                     ORDER BY created_at
@@ -155,7 +160,7 @@ async def load_messages(session_id: str,
             result = await conn.execute(
                 text("""
                     SELECT id, session_id, role, content, content_type,
-                           round_number, agent_source, token_count, created_at
+                           round_number, agent_source, token_count, options, created_at
                     FROM messages
                     WHERE session_id = :sid
                     ORDER BY created_at
@@ -176,7 +181,8 @@ async def load_messages(session_id: str,
                 "round_number": row[5],
                 "agent_source": row[6],
                 "token_count": row[7],
-                "created_at": row[8].isoformat() if row[8] else None,
+                "options": row[8] or [],
+                "created_at": row[9].isoformat() if row[9] else None,
             })
 
     return messages, total
