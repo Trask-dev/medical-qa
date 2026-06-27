@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 import bcrypt
 from jose import jwt
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 from persistence.database import _get_engine
 from api.schemas.auth import RegisterRequest, LoginRequest, TokenResponse
@@ -28,31 +29,33 @@ def _verify_password(password: str, hashed: str) -> bool:
 
 @router.post("/auth/register", status_code=201)
 async def register(req: RegisterRequest):
-    """用户注册"""
+    """用户注册（SELECT + INSERT 在同一事务中，避免 TOCTOU 竞态条件）"""
     engine = _get_engine()
+    user_id = str(uuid.uuid4())
+    password_hash = _hash_password(req.password)
 
-    # 手机号已存在？
-    async with engine.connect() as conn:
+    async with engine.begin() as conn:
+        # 事务内检查手机号是否已存在
         result = await conn.execute(
             text("SELECT id FROM users WHERE phone = :phone"),
             {"phone": req.phone},
         )
         if result.fetchone():
-            raise HTTPException(status_code=409, detail="该手机号已注册")
+            raise HTTPException(status_code=409, detail="手机号已注册")
 
-    # 创建用户
-    user_id = str(uuid.uuid4())
-    password_hash = _hash_password(req.password)
-    async with engine.begin() as conn:
-        await conn.execute(
-            text("""
-                INSERT INTO users (id, phone, password_hash, nickname)
-                VALUES (:id, :phone, :hash, :nickname)
-            """),
-            {"id": user_id, "phone": req.phone, "hash": password_hash, "nickname": req.nickname},
-        )
+        # 事务内插入新用户，UNIQUE 约束兜底捕获并发冲突
+        try:
+            await conn.execute(
+                text("""
+                    INSERT INTO users (id, phone, password_hash, nickname)
+                    VALUES (:id, :phone, :hash, :nickname)
+                """),
+                {"id": user_id, "phone": req.phone, "hash": password_hash, "nickname": req.nickname},
+            )
+        except IntegrityError:
+            raise HTTPException(status_code=409, detail="手机号已注册")
 
-    # 签发 token
+    # 签发 token（事务外）
     token = _create_token(user_id, req.phone)
     return TokenResponse(access_token=token, user_id=user_id, nickname=req.nickname)
 

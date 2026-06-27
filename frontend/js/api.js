@@ -2,7 +2,7 @@
    灵兰 API Client — 封装后端接口调用
    ═══════════════════════════════════════════════════════════════ */
 
-const API_BASE = 'http://localhost:8000/api/v1';
+const API_BASE = '/api/v1';
 
 const api = {
   _token: null,

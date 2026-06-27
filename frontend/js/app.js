@@ -76,14 +76,17 @@ function showApp() {
 async function loadSessions() {
   try {
     const res = await api.listSessions();
-    sessions = res.data || [];
+    // 防御：过滤掉 session_id 无效的条目
+    sessions = (res.data || []).filter(s => s.session_id && s.session_id !== 'undefined' && s.session_id !== 'null');
     renderSessions();
   } catch (e) { console.error('loadSessions:', e); }
 }
 
 function renderSessions() {
   const el = document.getElementById('sessionList');
-  el.innerHTML = sessions.map(s => `
+  // 防御：过滤掉 session_id 无效的会话（防止 undefined/null 污染侧边栏）
+  const validSessions = sessions.filter(s => s.session_id && s.session_id !== 'undefined' && s.session_id !== 'null');
+  el.innerHTML = validSessions.map(s => `
     <div class="sidebar-session${s.session_id === currentSessionId ? ' active' : ''}" data-sid="${s.session_id}">
       <span class="indicator"></span>
       <div class="info">
@@ -271,7 +274,9 @@ async function sendChoice(value, label) {
   activeRequestSessionId = sessionIdForThisRequest;
 
   try {
-    const res = await api.sendMessage(sessionIdForThisRequest, label, 'text', controller.signal);
+    // 选项 label 来自后端，通常不含 PII，但仍做脱敏
+    const sanitized = maskPII(label);
+    const res = await api.sendMessage(sessionIdForThisRequest, sanitized, 'text', controller.signal);
     hideThinking();
     if (currentSessionId === sessionIdForThisRequest) {
       handleResponse(res);
@@ -296,6 +301,9 @@ async function sendMessage() {
   if (!text) return;
   inputEl.value = ''; sendBtn.disabled = true;
 
+  // PII 脱敏前置（安全红线 #4）
+  const sanitized = maskPII(text);
+
   // 取消上一个未完成的请求
   cancelActiveRequest();
 
@@ -309,6 +317,13 @@ async function sendMessage() {
     } catch (e) { console.error('auto create session:', e); sendBtn.disabled = false; return; }
   }
 
+  // 防御：确保会话 ID 有效
+  if (!currentSessionId || currentSessionId === 'undefined' || currentSessionId === 'null') {
+    console.error('Invalid session ID, aborting send');
+    sendBtn.disabled = false; inputEl.focus();
+    return;
+  }
+
   // 快照：记录本次请求所属的会话 ID（防止响应时 session 已切换）
   const sessionIdForThisRequest = currentSessionId;
   appendMessage('user', text);
@@ -320,7 +335,8 @@ async function sendMessage() {
   activeRequestSessionId = sessionIdForThisRequest;
 
   try {
-    const res = await api.sendMessage(sessionIdForThisRequest, text, 'text', controller.signal);
+    // 发送脱敏后的文本给后端，前端仍显示原始输入
+    const res = await api.sendMessage(sessionIdForThisRequest, sanitized, 'text', controller.signal);
     hideThinking();
 
     // 关键校验：仅当用户仍停留在该会话时才处理响应
@@ -462,4 +478,11 @@ function fmtDate(iso) {
   const now = new Date();
   if (d.toDateString() === now.toDateString()) return `今天 ${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
   return `${d.getMonth()+1}月${d.getDate()}日`;
+}
+
+// 前端 PII 预脱敏（安全红线 #4）
+const _ID_CARD_RE = /\b[1-9]\d{5}(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}[\dXx]\b/g;
+const _PHONE_RE = /\b1[3-9]\d{9}\b/g;
+function maskPII(text) {
+  return text.replace(_ID_CARD_RE, '[身份证已隐藏]').replace(_PHONE_RE, '[手机号已隐藏]');
 }
