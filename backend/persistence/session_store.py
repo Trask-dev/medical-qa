@@ -231,6 +231,7 @@ async def list_sessions_from_db(status: str | None = None,
             sessions.append({
                 "id": row[0],
                 "session_id": row[0],
+                "title": state.get("title", "新会话"),
                 "status": state.get("current_stage", "init"),
                 "current_stage": state.get("current_stage", "init"),
                 "round_count": state.get("round_count", 0),

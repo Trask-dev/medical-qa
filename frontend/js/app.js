@@ -85,7 +85,7 @@ function renderSessions() {
     <div class="sidebar-session${s.session_id === currentSessionId ? ' active' : ''}" data-sid="${s.session_id}">
       <span class="indicator"></span>
       <div class="info">
-        <div class="title">${s.scenario || '健康咨询'}</div>
+        <div class="title">${s.title || '新会话'}</div>
         <div class="meta">${fmtDate(s.updated_at)} · 第${s.round_count || 0}轮</div>
       </div>
       <button class="btn-del" data-del="${s.session_id}" title="删除">×</button>
@@ -121,15 +121,20 @@ async function selectSession(sid) {
   updateStageUI();
 }
 
-document.getElementById('btnNewSession').addEventListener('click', async () => {
-  try {
-    const res = await api.createSession();
-    currentSessionId = res.id;
-    await loadSessions();
-    clearChat();
-    updateStageUI();
-  } catch (e) { console.error('createSession:', e); }
+document.getElementById('btnNewSession').addEventListener('click', () => {
+  currentSessionId = null;
+  clearChat();
+  showWelcome();
+  updateStageUI();
+  renderSessions();
 });
+
+function showWelcome() {
+  chatEl.innerHTML = `<div class="welcome">
+    <h2>灵兰健康</h2>
+    <p>描述您的症状，AI 将为您逐步分析</p>
+  </div>`;
+}
 
 // ═══════════════════════════════════════════════════════════════
 // Chat
@@ -205,24 +210,50 @@ function appendMessage(role, content, options, isReport = false) {
   scrollChat();
 }
 
+function showThinking() {
+  const div = document.createElement('div');
+  div.className = 'msg assistant'; div.id = 'thinkingMsg';
+  div.innerHTML = '<div class="avatar-icon">AI</div><div class="bubble thinking">思考中<span class="dots"></span></div>';
+  chatEl.appendChild(div); scrollChat();
+}
+function hideThinking() {
+  const el = document.getElementById('thinkingMsg');
+  if (el) el.remove();
+}
+
 async function sendChoice(value, label) {
   if (!currentSessionId) return;
   appendMessage('user', label);
+  showThinking();
   try {
     const res = await api.sendMessage(currentSessionId, label);
+    hideThinking();
     handleResponse(res);
-  } catch (e) { console.error('sendChoice:', e); }
+  } catch (e) { hideThinking(); console.error('sendChoice:', e); }
 }
 
 async function sendMessage() {
   const text = inputEl.value.trim();
-  if (!text || !currentSessionId) return;
+  if (!text) return;
   inputEl.value = ''; sendBtn.disabled = true;
+
+  // 首次发消息：自动创建会话 + 清掉欢迎页
+  if (!currentSessionId) {
+    chatEl.innerHTML = '';
+    try {
+      const res = await api.createSession();
+      currentSessionId = res.id;
+      await loadSessions();
+    } catch (e) { console.error('auto create session:', e); sendBtn.disabled = false; return; }
+  }
+
   appendMessage('user', text);
+  showThinking();
   try {
     const res = await api.sendMessage(currentSessionId, text);
+    hideThinking();
     handleResponse(res);
-  } catch (e) { console.error('sendMessage:', e); }
+  } catch (e) { hideThinking(); console.error('sendMessage:', e); }
   sendBtn.disabled = false; inputEl.focus();
 }
 

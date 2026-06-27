@@ -124,6 +124,7 @@ async def send_message(session_id: str, req: SendMessageRequest):
         "red_flag_raised": result.get("red_flag_raised", False),
         "safety_checks_passed": result.get("safety_checks_passed", True),
         "search_results": result.get("search_results", []),
+        "title": prev.get("title") or req.content[:40],
         "search_queries": result.get("search_queries", []),
         "diagnosis_result": result.get("diagnosis_result"),
         "route_decision": result.get("route_decision", ""),
