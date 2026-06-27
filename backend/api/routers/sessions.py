@@ -36,6 +36,7 @@ async def create_session(user: dict = Depends(get_current_user)):
 
     return {
         "id": sid,
+        "session_id": sid,
         "user_id": user["user_id"],
         "status": "active",
         "intent": "greeting",
@@ -51,7 +52,7 @@ async def create_session(user: dict = Depends(get_current_user)):
 
 
 @router.get("/sessions")
-async def list_sessions(status: str = None, user_id: str = None, limit: int = 20, offset: int = 0):
+async def list_sessions(status: str = None, user_id: str = None, limit: int = 20, offset: int = 0, user: dict = Depends(get_current_user)):
     """查询会话列表：从 PostgreSQL 分页查询"""
     data, total = await list_sessions_from_db(
         status=status, user_id=user_id, limit=limit, offset=offset,
@@ -69,17 +70,18 @@ async def list_sessions(status: str = None, user_id: str = None, limit: int = 20
 
 
 @router.get("/sessions/{session_id}")
-async def get_session(session_id: str):
+async def get_session(session_id: uuid.UUID, user: dict = Depends(get_current_user)):
     """获取单个会话详情"""
-    state = await load_state(session_id)
+    sid = str(session_id)
+    state = await load_state(sid)
     if not state:
         raise HTTPException(status_code=404, detail="会话不存在")
 
-    _, message_count = await load_messages(session_id, limit=1)
+    _, message_count = await load_messages(sid, limit=1)
 
     return {
-        "id": session_id,
-        "session_id": session_id,
+        "id": sid,
+        "session_id": sid,
         "status": state.get("current_stage", "init"),
         "current_stage": state.get("current_stage", "init"),
         "round_count": state.get("round_count", 0),
@@ -91,9 +93,10 @@ async def get_session(session_id: str):
 
 
 @router.patch("/sessions/{session_id}")
-async def update_session(session_id: str, req: UpdateSessionRequest):
+async def update_session(session_id: uuid.UUID, req: UpdateSessionRequest, user: dict = Depends(get_current_user)):
     """更新会话配置"""
-    state = await load_state(session_id)
+    sid = str(session_id)
+    state = await load_state(sid)
     if not state:
         raise HTTPException(status_code=404, detail="会话不存在")
 
@@ -102,18 +105,18 @@ async def update_session(session_id: str, req: UpdateSessionRequest):
     if req.max_rounds is not None:
         state["max_rounds"] = req.max_rounds
 
-    await save_state(session_id, state)
+    await save_state(sid, state)
 
     return {
-        "id": session_id,
+        "id": sid,
         "status": state.get("current_stage", "init"),
         "max_rounds": state.get("max_rounds", 10),
     }
 
 
 @router.delete("/sessions/{session_id}", status_code=204)
-async def delete_session(session_id: str):
+async def delete_session(session_id: uuid.UUID, user: dict = Depends(get_current_user)):
     """删除会话：级联删除消息 + 状态"""
-    deleted = await delete_session_from_db(session_id)
+    deleted = await delete_session_from_db(str(session_id))
     if not deleted:
         raise HTTPException(status_code=404, detail="会话不存在")

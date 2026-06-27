@@ -9,11 +9,12 @@ import uuid
 import json
 from datetime import date, datetime, timezone
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy import text
 
 from api.schemas.message import SendMessageRequest, SendMessageResponse, MessageResponse
+from api.dependencies import get_current_user
 from workflow.graph import build_workflow
 from persistence.database import _get_engine
 from persistence.session_store import (
@@ -30,7 +31,7 @@ def _get_graph():
 
 
 @router.post("/sessions/{session_id}/messages")
-async def send_message(session_id: str, req: SendMessageRequest):
+async def send_message(session_id: uuid.UUID, req: SendMessageRequest, user: dict = Depends(get_current_user)):
     """
     发送消息接口：用户每发一条消息，就驱动AI问诊引擎走一步。
 
@@ -42,8 +43,10 @@ async def send_message(session_id: str, req: SendMessageRequest):
     """
     graph = _get_graph()
 
+    sid = str(session_id)
+
     # ---- 第1步：从 DB 加载累积状态 ----
-    prev = await load_state(session_id)
+    prev = await load_state(sid)
 
     # ---- 第2步：持久化用户消息 ----
     user_msg = {
@@ -57,10 +60,10 @@ async def send_message(session_id: str, req: SendMessageRequest):
         "token_count": None,
         "created_at": datetime.now(timezone.utc),
     }
-    await append_message(session_id, user_msg)
+    await append_message(sid, user_msg)
 
     # 从 DB 加载完整历史消息（转换为工作流引擎需要的格式）
-    all_msgs, _ = await load_messages(session_id, limit=200)
+    all_msgs, _ = await load_messages(sid, limit=200)
     history_messages = []
     for msg in all_msgs:
         role = msg.get("role", "")
@@ -79,7 +82,7 @@ async def send_message(session_id: str, req: SendMessageRequest):
         "diagnosis_result": prev.get("diagnosis_result"),
         "round_count": prev.get("round_count", 0),
         "max_rounds": prev.get("max_rounds", 5),
-        "session_id": session_id,
+        "session_id": sid,
         "current_stage": prev.get("current_stage", "init"),
         "route_decision": prev.get("route_decision", ""),
         "current_scenario": prev.get("current_scenario", "general_consultation"),
@@ -117,7 +120,7 @@ async def send_message(session_id: str, req: SendMessageRequest):
     result = await graph.ainvoke(state)
 
     # ---- 保存状态到 DB ----
-    await save_state(session_id, {
+    await save_state(sid, {
         "collected_info": result.get("collected_info", {}),
         "round_count": result.get("round_count", 0),
         "max_rounds": result.get("max_rounds", prev.get("max_rounds", 5)),
@@ -156,7 +159,7 @@ async def send_message(session_id: str, req: SendMessageRequest):
     if assistant_reply:
         ai_msg = {
             "id": str(uuid.uuid4()),
-            "session_id": session_id,
+            "session_id": sid,
             "round_number": round_count,
             "role": "assistant",
             "content": assistant_reply,
@@ -166,7 +169,7 @@ async def send_message(session_id: str, req: SendMessageRequest):
             "options": options,
             "created_at": datetime.now(timezone.utc),
         }
-        await append_message(session_id, ai_msg)
+        await append_message(sid, ai_msg)
 
     return SendMessageResponse(
         message=MessageResponse(**user_msg),
@@ -183,10 +186,10 @@ async def send_message(session_id: str, req: SendMessageRequest):
 
 
 @router.get("/sessions/{session_id}/messages")
-async def list_messages(session_id: str, limit: int = 20, offset: int = 0, round_number: int = None):
+async def list_messages(session_id: uuid.UUID, limit: int = 20, offset: int = 0, round_number: int = None, user: dict = Depends(get_current_user)):
     """查询历史消息：支持分页 + 按轮次过滤"""
     data, total = await load_messages(
-        session_id, limit=limit, offset=offset, round_number=round_number,
+        str(session_id), limit=limit, offset=offset, round_number=round_number,
     )
 
     return {
@@ -201,7 +204,7 @@ async def list_messages(session_id: str, limit: int = 20, offset: int = 0, round
 
 
 @router.get("/sessions/{session_id}/stream")
-async def stream_events(session_id: str):
+async def stream_events(session_id: uuid.UUID, user: dict = Depends(get_current_user)):
     """
     SSE流式推送接口：实时向前端推送问诊过程中的各类事件。
 
