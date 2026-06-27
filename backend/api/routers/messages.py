@@ -48,20 +48,6 @@ async def send_message(session_id: uuid.UUID, req: SendMessageRequest, user: dic
     # ---- 第1步：从 DB 加载累积状态 ----
     prev = await load_state(sid)
 
-    # ---- 第2步：持久化用户消息 ----
-    user_msg = {
-        "id": str(uuid.uuid4()),
-        "session_id": session_id,
-        "round_number": prev.get("round_count", 0),
-        "role": "user",
-        "content": req.content,
-        "content_type": req.content_type,
-        "agent_source": None,
-        "token_count": None,
-        "created_at": datetime.now(timezone.utc),
-    }
-    await append_message(sid, user_msg)
-
     # 从 DB 加载完整历史消息（转换为工作流引擎需要的格式）
     all_msgs, _ = await load_messages(sid, limit=200)
     history_messages = []
@@ -70,6 +56,8 @@ async def send_message(session_id: uuid.UUID, req: SendMessageRequest, user: dic
         content = msg.get("content", "")
         if role and content:
             history_messages.append({"role": role, "content": content})
+    # 追加当前用户消息（尚未持久化到 DB；workflow 需要它作为输入）
+    history_messages.append({"role": "user", "content": req.content})
     
     state = {
         "messages": history_messages,
@@ -119,6 +107,20 @@ async def send_message(session_id: uuid.UUID, req: SendMessageRequest, user: dic
     # ---- 第3步：执行AI工作流 ----
     result = await graph.ainvoke(state)
 
+    # ---- 第4步：持久化用户消息（仅在 workflow 成功后）----
+    user_msg = {
+        "id": str(uuid.uuid4()),
+        "session_id": session_id,
+        "round_number": prev.get("round_count", 0),
+        "role": "user",
+        "content": req.content,
+        "content_type": req.content_type,
+        "agent_source": None,
+        "token_count": None,
+        "created_at": datetime.now(timezone.utc),
+    }
+    await append_message(sid, user_msg)
+
     # ---- 保存状态到 DB ----
     await save_state(sid, {
         "collected_info": result.get("collected_info", {}),
@@ -137,7 +139,7 @@ async def send_message(session_id: uuid.UUID, req: SendMessageRequest, user: dic
         "options": result.get("options", []),
     })
 
-    # ---- 第4步：根据引擎输出决定前端下一步动作 ----
+    # ---- 第5步：根据引擎输出决定前端下一步动作 ----
     red_flag = result.get("red_flag_raised", False)
     stage = result.get("current_stage", "init")
     round_count = result.get("round_count", 0)
