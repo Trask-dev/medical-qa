@@ -206,7 +206,7 @@ async def list_sessions_from_db(status: str | None = None,
             conditions.append("state_data->>'current_stage' = :status")
             params["status"] = status
         if user_id:
-            conditions.append("state_data->>'scenario_id' = :user_id")
+            conditions.append("state_data->>'user_id' = :user_id")
             params["user_id"] = user_id
 
         where_clause = ""
