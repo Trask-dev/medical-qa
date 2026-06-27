@@ -77,18 +77,28 @@ async def load_state(session_id: str) -> dict:
 
 
 async def save_state(session_id: str, state: dict) -> None:
-    """保存（插入或更新）会话状态"""
+    """保存（插入或合并更新）会话状态 — 不会覆盖未传入的 key"""
     engine = _get_engine()
     async with engine.begin() as conn:
+        # 先查现有 state
+        result = await conn.execute(
+            text("SELECT state_data FROM session_state WHERE session_id = :sid"),
+            {"sid": session_id},
+        )
+        row = result.fetchone()
+        existing = row[0] if row else {}
+
+        # 合并：新值覆盖旧值，但保留旧值中未被覆盖的 key
+        merged = {**existing, **state}
+
         await conn.execute(
             text("""
                 INSERT INTO session_state (session_id, state_data, updated_at)
                 VALUES (:sid, :data, NOW())
                 ON CONFLICT (session_id) DO UPDATE
-                SET state_data = EXCLUDED.state_data,
-                    updated_at = NOW()
+                SET state_data = EXCLUDED.state_data, updated_at = NOW()
             """),
-            {"sid": session_id, "data": json.dumps(state, ensure_ascii=False)},
+            {"sid": session_id, "data": json.dumps(merged, ensure_ascii=False)},
         )
 
 
