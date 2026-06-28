@@ -17,8 +17,8 @@ class Settings(BaseSettings):
 
     EMBEDDING_PROVIDER: str = "aliyun"
     EMBEDDING_API_KEY: Optional[str] = None
-    EMBEDDING_MODEL: str = "text-embedding-v3"
-    EMBEDDING_BASE_URL: str = "https://dashscope.aliyuncs.com/api/v1/services/embeddings/text-embedding/text-embedding"
+    EMBEDDING_MODEL: str = "text-embedding-v4"
+    EMBEDDING_BASE_URL: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
     VECTOR_DIM: int = 1024
     VECTOR_STORE_BACKEND: str = "pgvector"

@@ -28,9 +28,9 @@ class EmbeddingConfig:
 
 def load_embedding_config() -> EmbeddingConfig:
     return EmbeddingConfig(
-        provider=os.getenv("EMBEDDING_PROVIDER", "openai"),
-        model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"),
-        base_url=os.getenv("EMBEDDING_BASE_URL", "https://api.openai.com/v1"),
+        provider=os.getenv("EMBEDDING_PROVIDER", "aliyun"),
+        model=os.getenv("EMBEDDING_MODEL", "text-embedding-v4"),
+        base_url=os.getenv("EMBEDDING_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
         api_key=os.getenv("EMBEDDING_API_KEY", os.getenv("OPENAI_API_KEY", "")),
         dimensions=int(os.getenv("EMBEDDING_DIMENSIONS", "1024")),
     )
