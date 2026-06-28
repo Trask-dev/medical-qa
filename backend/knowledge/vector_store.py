@@ -147,7 +147,7 @@ class PGVectorStore(VectorStore):
                 await conn.execute(text(
                     f"INSERT INTO {self._table} (id, embedding, content, source, source_type, "
                     f"title, authority_score, freshness_score, publish_year) "
-                    f"VALUES (:id, :emb::vector, :content, :source, :stype, :title, :auth, :fresh, :year) "
+                    f"VALUES (:id, CAST(:emb AS vector), :content, :source, :stype, :title, :auth, :fresh, :year) "
                     f"ON CONFLICT (id) DO UPDATE SET embedding=EXCLUDED.embedding, content=EXCLUDED.content"
                 ), {"id": vid, "emb": emb_str,
                     "content": meta.get("content", ""),
@@ -164,9 +164,9 @@ class PGVectorStore(VectorStore):
         engine = await self._get_engine()
         async with engine.connect() as conn:
             rows = await conn.execute(text(
-                f"SELECT id, 1 - (embedding <=> :vec::vector) AS score, content, source, "
+                f"SELECT id, 1 - (embedding <=> CAST(:vec AS vector)) AS score, content, source, "
                 f"source_type, title, authority_score, freshness_score, publish_year "
-                f"FROM {self._table} ORDER BY embedding <=> :vec::vector LIMIT :k"
+                f"FROM {self._table} ORDER BY embedding <=> CAST(:vec AS vector) LIMIT :k"
             ), {"vec": vec_str, "k": top_k})
             results = rows.fetchall()
         return [{"id": r[0], "score": r[1],
