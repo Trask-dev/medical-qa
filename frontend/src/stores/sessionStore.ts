@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { sessionsApi } from '@/api/sessions'
+import { isValidSessionId } from '@/utils/validate'
 import type { Session } from '@/types/session'
 
 export const useSessionStore = defineStore('session', () => {
@@ -11,10 +12,7 @@ export const useSessionStore = defineStore('session', () => {
   async function fetchSessions() {
     try {
       const res = await sessionsApi.listSessions()
-      // 防御：过滤掉 session_id 无效的条目
-      sessions.value = (res.data || []).filter(
-        s => s.session_id && s.session_id !== 'undefined' && s.session_id !== 'null',
-      )
+      sessions.value = (res.data || []).filter(s => isValidSessionId(s.session_id))
     } catch (e) {
       console.error('fetchSessions:', e)
     }
@@ -34,8 +32,7 @@ export const useSessionStore = defineStore('session', () => {
 
   /** 删除会话 */
   async function deleteSession(sid: string) {
-    // 防御：拒绝无效 session_id
-    if (!sid || sid === 'undefined' || sid === 'null') return
+    if (!isValidSessionId(sid)) return
     try {
       await sessionsApi.deleteSession(sid)
       if (currentSessionId.value === sid) {

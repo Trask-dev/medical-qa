@@ -5,26 +5,28 @@ import type { Message, NextAction } from '@/types/message'
 
 export const useMessageStore = defineStore('message', () => {
   const messages = ref<Message[]>([])
-  const isLoading = ref(false)
   const nextAction = ref<NextAction | null>(null)
 
   // 竞态保护：AbortController + 请求所属会话 ID
-  let abortController: AbortController | null = null
+  const _abortCtrl = ref<AbortController | null>(null)
   let requestSessionId: string | null = null
+
+  /** AI 思考中（从活跃的 AbortController 派生，无需手动 toggle） */
+  const isLoading = computed(() => _abortCtrl.value !== null)
 
   /** 诊断是否已完成（用后端 next_action 权威信号 + 历史消息启发式兜底） */
   const isDiagnosisDone = computed(() => {
-    // 优先使用后端权威信号
     if (nextAction.value === 'diagnosis_ready' || nextAction.value === 'emergency_interrupted') {
       return true
     }
-    // 历史消息兜底：最后一条 assistant 消息长文本无选项
-    const lastAssistant = [...messages.value].reverse().find(m => m.role === 'assistant')
-    if (!lastAssistant) return false
-    return (
-      (!lastAssistant.options || lastAssistant.options.length === 0) &&
-      lastAssistant.content.length > 150
-    )
+    const msgs = messages.value
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].role === 'assistant') {
+        const m = msgs[i]
+        return !m.options?.length && m.content.length > 150
+      }
+    }
+    return false
   })
 
   /** 加载会话历史消息 */
@@ -53,10 +55,8 @@ export const useMessageStore = defineStore('message', () => {
 
     // 创建 AbortController
     const controller = new AbortController()
-    abortController = controller
+    _abortCtrl.value = controller
     requestSessionId = sessionIdForThisRequest
-
-    isLoading.value = true
 
     try {
       const res = await messagesApi.sendMessage(sessionId, text, 'text', controller.signal)
@@ -92,10 +92,9 @@ export const useMessageStore = defineStore('message', () => {
       throw e
     } finally {
       if (requestSessionId === sessionIdForThisRequest) {
-        abortController = null
+        _abortCtrl.value = null
         requestSessionId = null
       }
-      isLoading.value = false
     }
   }
 
@@ -105,30 +104,15 @@ export const useMessageStore = defineStore('message', () => {
     label: string,
     sessionId: string,
   ) {
-    // 先追加用户选择消息
-    messages.value.push({
-      id: crypto.randomUUID(),
-      session_id: sessionId,
-      round_number: messages.value.length > 0
-        ? messages.value[messages.value.length - 1].round_number
-        : 0,
-      role: 'user',
-      content: label,
-      content_type: 'text',
-      agent_source: null,
-      token_count: null,
-      created_at: new Date().toISOString(),
-    })
-
-    // 复用 sendMessage 逻辑
+    addUserMessage(label, sessionId)
     await sendMessage(label, sessionId)
   }
 
   /** 取消当前请求 */
   function cancelRequest() {
-    if (abortController) {
-      abortController.abort()
-      abortController = null
+    if (_abortCtrl.value) {
+      _abortCtrl.value.abort()
+      _abortCtrl.value = null
       requestSessionId = null
     }
   }

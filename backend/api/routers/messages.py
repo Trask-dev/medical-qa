@@ -49,7 +49,7 @@ async def send_message(session_id: uuid.UUID, req: SendMessageRequest, user: dic
     prev = await load_state(sid)
 
     # 从 DB 加载完整历史消息（转换为工作流引擎需要的格式）
-    all_msgs, _ = await load_messages(sid, limit=200)
+    all_msgs, _ = await load_messages(sid, limit=200, need_count=False)
     history_messages = []
     for msg in all_msgs:
         role = msg.get("role", "")

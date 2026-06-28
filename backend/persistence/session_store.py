@@ -77,28 +77,18 @@ async def load_state(session_id: str) -> dict:
 
 
 async def save_state(session_id: str, state: dict) -> None:
-    """保存（插入或合并更新）会话状态 — 不会覆盖未传入的 key"""
+    """保存（插入或合并更新）会话状态 — 原子操作，不覆盖未传入的 key"""
     engine = _get_engine()
     async with engine.begin() as conn:
-        # 先查现有 state
-        result = await conn.execute(
-            text("SELECT state_data FROM session_state WHERE session_id = :sid"),
-            {"sid": session_id},
-        )
-        row = result.fetchone()
-        existing = row[0] if row else {}
-
-        # 合并：新值覆盖旧值，但保留旧值中未被覆盖的 key
-        merged = {**existing, **state}
-
         await conn.execute(
             text("""
                 INSERT INTO session_state (session_id, state_data, updated_at)
                 VALUES (:sid, :data, NOW())
                 ON CONFLICT (session_id) DO UPDATE
-                SET state_data = EXCLUDED.state_data, updated_at = NOW()
+                SET state_data = session_state.state_data || EXCLUDED.state_data,
+                    updated_at = NOW()
             """),
-            {"sid": session_id, "data": json.dumps(merged, ensure_ascii=False)},
+            {"sid": session_id, "data": json.dumps(state, ensure_ascii=False)},
         )
 
 
@@ -136,22 +126,24 @@ async def append_message(session_id: str, msg: dict) -> None:
 async def load_messages(session_id: str,
                         limit: int = 200,
                         offset: int = 0,
-                        round_number: int | None = None) -> tuple[list[dict], int]:
-    """分页加载消息历史，返回 (消息列表, 总数)"""
+                        round_number: int | None = None,
+                        need_count: bool = True) -> tuple[list[dict], int]:
+    """分页加载消息历史，返回 (消息列表, 总数)。need_count=False 可跳过 COUNT 查询。"""
     engine = _get_engine()
     async with engine.connect() as conn:
-        # 总数
-        if round_number is not None:
-            count_result = await conn.execute(
-                text("SELECT COUNT(*) FROM messages WHERE session_id = :sid AND round_number = :rn"),
-                {"sid": session_id, "rn": round_number},
-            )
-        else:
-            count_result = await conn.execute(
-                text("SELECT COUNT(*) FROM messages WHERE session_id = :sid"),
-                {"sid": session_id},
-            )
-        total = count_result.scalar() or 0
+        total = 0
+        if need_count:
+            if round_number is not None:
+                count_result = await conn.execute(
+                    text("SELECT COUNT(*) FROM messages WHERE session_id = :sid AND round_number = :rn"),
+                    {"sid": session_id, "rn": round_number},
+                )
+            else:
+                count_result = await conn.execute(
+                    text("SELECT COUNT(*) FROM messages WHERE session_id = :sid"),
+                    {"sid": session_id},
+                )
+            total = count_result.scalar() or 0
 
         # 分页数据
         if round_number is not None:

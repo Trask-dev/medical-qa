@@ -4,6 +4,7 @@ import { useSessionStore } from '@/stores/sessionStore'
 import { useMessageStore } from '@/stores/messageStore'
 import { useAuthStore } from '@/stores/authStore'
 import { maskPII } from '@/utils/piiMasker'
+import { isValidSessionId } from '@/utils/validate'
 import AppSidebar from '@/components/layout/AppSidebar.vue'
 import AppHeader from '@/components/layout/AppHeader.vue'
 import ChatView from '@/components/chat/ChatView.vue'
@@ -68,9 +69,8 @@ async function onSendMessage(text: string) {
     await sessionStore.fetchSessions()
   }
 
-  // 防御：确保会话 ID 有效
   const sid = sessionStore.currentSessionId
-  if (!sid || sid === 'undefined' || sid === 'null') {
+  if (!isValidSessionId(sid)) {
     console.error('Invalid session ID, aborting send')
     return
   }
