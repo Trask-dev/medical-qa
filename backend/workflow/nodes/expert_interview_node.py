@@ -51,6 +51,7 @@ async def expert_interview_node(state: dict) -> dict:
     scenario_context = dict(state.get("scenario_context", {}))
     scenario_context["prompt_template"] = "expert_consultation"
 
+    search_results = []
     try:
         search_results = await retrieve_for_symptoms(collected_info, top_k=5)
         knowledge_context = format_knowledge_context(search_results)

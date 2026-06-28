@@ -12,8 +12,27 @@ const sessionStore = useSessionStore()
 const containerRef = ref<HTMLElement | null>(null)
 const { onScroll, scrollToBottom } = useScroll(containerRef)
 
-// 诊断完成后禁用选项和历史选项
+// 诊断完成后禁用选项
 const isDiagnosisDone = computed(() => msgStore.isDiagnosisDone)
+
+// 找到最后一条含选项的 assistant 消息的索引
+// 只有这条消息的选项可点击，历史选项全部禁用
+const lastActiveChoiceIndex = computed(() => {
+  const msgs = msgStore.messages
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (msgs[i].role === 'assistant' && (msgs[i].options?.length ?? 0) > 0) {
+      return i
+    }
+  }
+  return -1
+})
+
+/** 判断某条消息的选项是否应禁用 */
+function isChoiceDisabled(msgIndex: number): boolean {
+  if (isDiagnosisDone.value) return true
+  if (lastActiveChoiceIndex.value === -1) return false
+  return msgIndex !== lastActiveChoiceIndex.value
+}
 
 // 新消息到来时滚动到底部
 watch(
@@ -44,10 +63,10 @@ function onSelectChoice(value: string, label: string) {
 
     <!-- 消息列表 -->
     <ChatMessage
-      v-for="msg in msgStore.messages"
+      v-for="(msg, idx) in msgStore.messages"
       :key="msg.id"
       :message="msg"
-      :disabled-choices="isDiagnosisDone"
+      :disabled-choices="isChoiceDisabled(idx)"
       @select-choice="onSelectChoice"
     />
 

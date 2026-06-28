@@ -7,6 +7,7 @@ let currentSessionId = null;
 let sessions = [];
 let activeAbortController = null;   // 正在进行的请求的 AbortController
 let activeRequestSessionId = null;  // 正在进行的请求所属的会话 ID
+let isProcessing = false;           // AI 思考中时锁定全部交互
 
 // ── Init ──────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -108,6 +109,7 @@ function renderSessions() {
   el.querySelectorAll('.btn-del').forEach(btn => {
     btn.addEventListener('click', async e => {
       e.stopPropagation();
+      if (isProcessing) return;  // AI 思考中，禁止删除
       await api.deleteSession(btn.dataset.del);
       if (currentSessionId === btn.dataset.del) { currentSessionId = null; clearChat(); }
       await loadSessions();
@@ -116,6 +118,7 @@ function renderSessions() {
 }
 
 async function selectSession(sid) {
+  if (isProcessing) return;  // AI 思考中，禁止切换会话
   // 取消上一个会话正在进行中的请求，防止其响应污染当前会话
   cancelActiveRequest();
 
@@ -139,6 +142,7 @@ async function selectSession(sid) {
 }
 
 document.getElementById('btnNewSession').addEventListener('click', () => {
+  if (isProcessing) return;  // AI 思考中，禁止操作
   cancelActiveRequest();
   currentSessionId = null;
   clearChat();
@@ -199,7 +203,22 @@ function renderMessages(msgs) {
     const isReport = m.role === 'assistant' && (!m.options || m.options.length === 0) && m.content && m.content.length > 150;
     appendMessage(m.role, m.content, m.options, isReport);
   });
+  disableHistoricalChoices();
   scrollChat();
+}
+
+// 禁用所有历史选项卡片，仅最后一条 AI 消息的选项可点击
+function disableHistoricalChoices() {
+  const allChoices = chatEl.querySelectorAll('.msg.assistant .choices');
+  // 最后一个是当前轮次，保留可点击；其余全部禁用
+  for (let i = 0; i < allChoices.length; i++) {
+    if (i === allChoices.length - 1) continue;
+    allChoices[i].querySelectorAll('.choice-card').forEach(card => {
+      card.style.pointerEvents = 'none';
+      card.style.opacity = '0.5';
+      card.style.cursor = 'not-allowed';
+    });
+  }
 }
 
 function appendMessage(role, content, options, isReport = false) {
@@ -261,9 +280,12 @@ function hideThinking() {
 
 async function sendChoice(value, label) {
   if (!currentSessionId) return;
+  if (isProcessing) return;  // AI 思考中，阻止操作
 
   // 取消上一个未完成的请求
   cancelActiveRequest();
+  isProcessing = true;
+  inputEl.disabled = true;
 
   const sessionIdForThisRequest = currentSessionId;
   appendMessage('user', label);
@@ -292,14 +314,19 @@ async function sendChoice(value, label) {
     if (activeRequestSessionId === sessionIdForThisRequest) {
       activeAbortController = null;
       activeRequestSessionId = null;
+      isProcessing = false;
     }
+    inputEl.disabled = false;
   }
 }
 
 async function sendMessage() {
   const text = inputEl.value.trim();
   if (!text) return;
+  if (isProcessing) return;  // AI 思考中，阻止重复发送
+  isProcessing = true;
   sendBtn.disabled = true;
+  inputEl.disabled = true;
 
   // PII 脱敏前置（安全红线 #4）
   const sanitized = maskPII(text);
@@ -362,8 +389,10 @@ async function sendMessage() {
     if (activeRequestSessionId === sessionIdForThisRequest) {
       activeAbortController = null;
       activeRequestSessionId = null;
+      isProcessing = false;
     }
     sendBtn.disabled = false;
+    inputEl.disabled = false;
     // 仅当用户仍在该会话时才聚焦输入框
     if (currentSessionId === sessionIdForThisRequest) {
       inputEl.focus();
@@ -378,6 +407,8 @@ function handleResponse(res) {
     || (res.response_content && res.response_content.length > 200 && (!res.options || res.options.length === 0));
   if (res.response_content) {
     appendMessage('assistant', res.response_content, res.options, isReport);
+    // 新消息到达后，禁用历史选项（只有最新一轮可选）
+    disableHistoricalChoices();
   }
   if (res.red_flag_raised) {
     stageEl.style.display = 'inline'; stageEl.textContent = '紧急';

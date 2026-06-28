@@ -27,6 +27,7 @@ onMounted(async () => {
 
 /** 点击侧边栏会话 */
 async function onSelectSession(sid: string) {
+  if (msgStore.isLoading) return  // AI 思考中，禁止操作
   msgStore.cancelRequest()
   sessionStore.selectSession(sid)
   try {
@@ -38,6 +39,7 @@ async function onSelectSession(sid: string) {
 
 /** 删除会话 */
 async function onDeleteSession(sid: string) {
+  if (msgStore.isLoading) return  // AI 思考中，禁止操作
   await sessionStore.deleteSession(sid)
   if (sessionStore.currentSessionId === sid) {
     msgStore.clearMessages()
@@ -46,6 +48,7 @@ async function onDeleteSession(sid: string) {
 
 /** 新建会话 */
 function onNewSession() {
+  if (msgStore.isLoading) return  // AI 思考中，禁止操作
   msgStore.cancelRequest()
   sessionStore.clearCurrentSession()
   msgStore.clearMessages()
@@ -53,6 +56,7 @@ function onNewSession() {
 
 /** 发送消息 */
 async function onSendMessage(text: string) {
+  if (msgStore.isLoading) return  // AI 思考中，禁止重复发送
   // PII 脱敏前置（安全红线 #4）
   const sanitized = maskPII(text)
 
@@ -103,7 +107,7 @@ const inputPlaceholder = () => {
       <AppHeader />
       <ChatView />
       <ChatInput
-        :disabled="msgStore.isDiagnosisDone"
+        :disabled="msgStore.isDiagnosisDone || msgStore.isLoading"
         :placeholder="inputPlaceholder()"
         @send="onSendMessage"
       />

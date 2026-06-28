@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useSessionStore } from '@/stores/sessionStore'
+import { useMessageStore } from '@/stores/messageStore'
 import { useAuthStore } from '@/stores/authStore'
 import { fmtDate } from '@/utils/date'
 
 const sessionStore = useSessionStore()
+const msgStore = useMessageStore()
 const authStore = useAuthStore()
 
 const displayName = computed(() => authStore.user?.nickname || '用户')
@@ -22,6 +24,7 @@ const emit = defineEmits<{
 
 function onDelete(sid: string, e: Event) {
   e.stopPropagation()
+  if (msgStore.isLoading) return  // AI 思考中，禁止操作
   emit('deleteSession', sid)
 }
 </script>
@@ -38,7 +41,8 @@ function onDelete(sid: string, e: Event) {
 
     <!-- 新建会话 -->
     <button
-      class="block w-[calc(100%-2rem)] mx-4 my-2 py-2 bg-wisteria rounded-sm text-sm font-medium text-white hover:bg-plum transition-colors font-sans text-center"
+      class="block w-[calc(100%-2rem)] mx-4 my-2 py-2 bg-wisteria rounded-sm text-sm font-medium text-white hover:bg-plum transition-colors font-sans text-center disabled:opacity-40 disabled:cursor-not-allowed"
+      :disabled="msgStore.isLoading"
       @click="emit('newSession')"
     >
       + 新建会话
@@ -51,7 +55,8 @@ function onDelete(sid: string, e: Event) {
         v-for="s in sessionStore.sessions"
         :key="s.session_id"
         :class="[
-          'flex items-center gap-2 px-5 py-2 cursor-pointer transition-colors border-l-2 hover:bg-white/4',
+          'flex items-center gap-2 px-5 py-2 transition-colors border-l-2 hover:bg-white/4',
+          msgStore.isLoading ? 'pointer-events-none opacity-50' : 'cursor-pointer',
           sessionStore.currentSessionId === s.session_id
             ? 'bg-white/6 border-l-wisteria'
             : 'border-l-transparent',
