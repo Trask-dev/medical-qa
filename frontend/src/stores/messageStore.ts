@@ -8,6 +8,8 @@ export const useMessageStore = defineStore('message', () => {
   const nextAction = ref<NextAction | null>(null)
 
   // 竞态保护：AbortController + 请求所属会话 ID
+  // _abortCtrl 用 ref → 驱动 isLoading computed（响应式）
+  // requestSessionId 用普通变量 → 仅做快照比对，无需响应式
   const _abortCtrl = ref<AbortController | null>(null)
   let requestSessionId: string | null = null
 
@@ -23,7 +25,7 @@ export const useMessageStore = defineStore('message', () => {
     for (let i = msgs.length - 1; i >= 0; i--) {
       if (msgs[i].role === 'assistant') {
         const m = msgs[i]
-        return !m.options?.length && m.content.length > 150
+        return !m.options?.length && (m.content?.length ?? 0) > 150
       }
     }
     return false
