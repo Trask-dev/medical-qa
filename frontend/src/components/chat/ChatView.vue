@@ -29,6 +29,7 @@ const lastActiveChoiceIndex = computed(() => {
 
 /** 判断某条消息的选项是否应禁用 */
 function isChoiceDisabled(msgIndex: number): boolean {
+  if (msgStore.isLoading) return true   // AI 思考中，禁用所有选项
   if (isDiagnosisDone.value) return true
   if (lastActiveChoiceIndex.value === -1) return false
   return msgIndex !== lastActiveChoiceIndex.value
