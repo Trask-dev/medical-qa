@@ -4,20 +4,34 @@
 
 ## 快速启动（Docker，推荐）
 
+**macOS / Linux：**
 ```bash
-# 1. 生成 SSL 证书
 mkdir -p certs
 openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
   -keyout certs/privkey.pem -out certs/fullchain.pem \
-  -subj "//CN=localhost"
+  -subj "/CN=localhost"
+
+cp backend/.env.example backend/.env
+# 编辑 backend/.env，填入 API Key
+
+docker compose -p medical-qa --env-file backend/.env up -d --build
+```
+
+**Windows（PowerShell）：**
+```powershell
+# 1. 生成 SSL 证书（如果 certs 目录已存在可跳过 mkdir）
+mkdir -Force certs
+openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout certs/privkey.pem -out certs/fullchain.pem -subj "//CN=localhost"
 
 # 2. 配置环境变量
-cp backend/.env.example backend/.env
+Copy-Item backend/.env.example backend/.env
 # 编辑 backend/.env，填入 API Key
 
 # 3. 一键启动
 docker compose -p medical-qa --env-file backend/.env up -d --build
 ```
+
+> 如果 PowerShell 中 `openssl` 不可用，可在 Git Bash 中执行第 1 步，或直接使用已生成的 `certs/` 目录。
 
 浏览器打开 `https://localhost`（自签名证书，点击"继续访问"）。
 
