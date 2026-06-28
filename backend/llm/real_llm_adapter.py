@@ -244,14 +244,11 @@ def _load_prompt_template(template_name: str) -> Template:
 
 
 def _build_fallback_response(messages: list, force_json: bool) -> dict:
-    user_msg = ""
-    for m in reversed(messages):
-        if m.get("role") == "user":
-            user_msg = m.get("content", "")
-            break
+    # 注意：messages 是发给 LLM 的 system/user prompt，不是用户对话消息。
+    # 不要从中提取"用户原文"——会泄露 prompt 模板文本到前端。
     if force_json:
         return {
-            "response_text": f"您提到\"{user_msg[:30]}\"，能再具体描述一下吗？",
+            "response_text": "抱歉，AI 服务暂时不可用，请稍后重试或更详细地描述您的症状。",
             "options": [
                 {"index": 1, "label": "疼痛", "value": "疼痛"},
                 {"index": 2, "label": "不适", "value": "不适"},
@@ -269,6 +266,14 @@ def _build_fallback_response(messages: list, force_json: bool) -> dict:
 
 def _extract_json(raw: str) -> dict:
     raw = raw.strip()
+
+    # 清洗常见的 prompt 泄露：LLM 有时会在 JSON 前附上模板标题
+    # 例如 "## 输出格式（仅JSON）\n{...}" 或 "```json\n{...}\n```"
+    raw = re.sub(r'^##\s*\S*\s*输出格式.*?\n', '', raw, flags=re.MULTILINE)
+    raw = re.sub(r'^```(?:json)?\s*\n', '', raw)
+    raw = re.sub(r'\n```\s*$', '', raw)
+    raw = raw.strip()
+
     m = re.search(r"\{.*\}", raw, re.DOTALL)
     target = m.group() if m else raw
     try:
